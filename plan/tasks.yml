@@ -10,3 +10,7 @@ tasks:
     title: "Update Reddit skill to use curl instead of WebFetch"
     purpose: "Fix the Reddit skill that is currently broken due to WebFetch having reddit.com on its domain blocklist."
     file: "tasks/20260117-002220-update-reddit-skill-to-use-curl-instead-of-webfetch.yml"
+  - timestamp: "20260117-003618"
+    title: "Update Reddit skill to use process substitution instead of pipes"
+    purpose: "Fix curl+jq commands in SKILL.md that fail due to pipe buffering issues in the Bash tool."
+    file: "tasks/20260117-003618-update-reddit-skill-process-substitution.yml"

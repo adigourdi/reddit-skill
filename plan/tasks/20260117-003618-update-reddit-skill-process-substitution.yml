@@ -1,0 +1,57 @@
+title: "Update Reddit skill to use process substitution instead of pipes"
+
+purpose: |
+  Fix curl+jq commands in SKILL.md that fail due to pipe buffering issues in the Bash tool.
+  Process substitution works reliably while pipes cause output to be lost.
+
+context: |
+  Debugging revealed that `curl ... | jq` pipes do not work in Claude Code's Bash tool
+  due to buffering issues. Testing confirmed that process substitution `jq '...' <(curl ...)`
+  works correctly. The thread comment filter also needs updating to properly handle nested
+  replies with a type check (replies can be empty string or object).
+
+start_date: "20260117-003019"
+end_date: "20260117-003618"
+
+description: |
+  Update all curl+jq pipe patterns in SKILL.md to use process substitution syntax.
+  Also update the thread fetching jq filter to include nested replies (top 10 comments
+  with 3 replies each) using proper type checking for the replies field.
+
+requirements:
+  - "Change all `curl ... | jq` patterns to `jq '...' <(curl ...)`"
+  - "Update thread comment jq filter to check replies type before accessing nested data"
+  - "Ensure all 6 curl+jq code blocks are updated consistently"
+  - "Preserve all existing jq filter logic while converting syntax"
+
+success_criteria:
+  - "All curl+jq commands in SKILL.md use process substitution syntax"
+  - "Thread comment filter uses `type == \"object\"` check for replies field"
+  - "No pipe syntax remains for curl-to-jq data flow"
+
+relevant_files:
+  # Target file to update
+  - "/home/adigo/work/claude-reddit/.claude/skills/reddit/SKILL.md"
+  # Reference documentation
+  - "/home/adigo/work/claude-reddit/.claude/skills/reddit/references/api.md"
+  - "/home/adigo/work/claude-reddit/docs/implementation.md"
+
+iterations:
+  - implementation:
+      summary: |
+        Updated all 6 curl+jq pipe patterns in SKILL.md to use process substitution syntax.
+        Changed the replies type check from string equality to proper type checking.
+      decisions:
+        - "Used `(.replies | type) == \"object\"` instead of `.replies == \"\"` for clearer type checking"
+        - "Kept jq filter on separate lines before the process substitution for readability"
+    review:
+      result: "approved"
+      summary: |
+        All 6 curl+jq pipe patterns successfully converted to process substitution syntax.
+        The replies type check is correctly implemented. No pipe syntax remains in the file.
+      pass:
+        - "All curl+jq patterns converted to process substitution (verified 6 occurrences)"
+        - "Thread comment filter uses `(.replies | type) == \"object\"` check"
+        - "No pipe syntax remains for curl-to-jq data flow (grep confirmed)"
+        - "jq filter syntax is valid (syntax checks passed)"
+        - "Consistent formatting across all code blocks"

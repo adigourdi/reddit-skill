@@ -65,7 +65,7 @@ ENCODED_QUERY=$(printf '%s' "$QUERY" | jq -sRr @uri)
 URL="https://www.reddit.com/search.json?q=${ENCODED_QUERY}&sort=relevance&limit=10"
 
 # Fetch and parse
-curl -s -A "axios/1.8.4" "$URL" | jq '
+jq '
   .data.children[] | .data | {
     title,
     author,
@@ -79,7 +79,7 @@ curl -s -A "axios/1.8.4" "$URL" | jq '
     is_self,
     over_18
   }
-'
+' <(curl -s -A "axios/1.8.4" "$URL")
 ```
 
 For subreddit-scoped search (when user specifies `site:r/subreddit`):
@@ -97,7 +97,7 @@ Convert the thread URL to JSON endpoint by inserting `.json` before any query pa
 THREAD_URL="https://www.reddit.com/r/rust/comments/abc123/title.json?sort=best&limit=10"
 
 # Extract post info
-curl -s -A "axios/1.8.4" "$THREAD_URL" | jq '
+jq '
   .[0].data.children[0].data | {
     title,
     author,
@@ -108,24 +108,24 @@ curl -s -A "axios/1.8.4" "$THREAD_URL" | jq '
     upvote_ratio,
     created_utc
   }
-'
+' <(curl -s -A "axios/1.8.4" "$THREAD_URL")
 
 # Extract comments with replies
-curl -s -A "axios/1.8.4" "$THREAD_URL" | jq '
+jq '
   [.[1].data.children[:10][] | select(.kind == "t1") | .data | {
     body,
     author,
     score,
     depth,
-    replies: (if .replies == "" then [] else
+    replies: (if (.replies | type) == "object" then
       [.replies.data.children[:3][] | select(.kind == "t1") | .data | {
         body,
         author,
         score
       }]
-    end)
+    else [] end)
   }]
-'
+' <(curl -s -A "axios/1.8.4" "$THREAD_URL")
 ```
 
 ### Short URLs (redd.it)
@@ -385,9 +385,9 @@ Action: Search mode, how-to query type
 ```
 
 ```bash
-curl -s -A "axios/1.8.4" "https://www.reddit.com/search.json?q=configure%20neovim%20rust&sort=relevance&limit=10" | jq '
+jq '
   .data.children[] | .data | {title, author, subreddit, score, num_comments, permalink, selftext: (.selftext[:200])}
-'
+' <(curl -s -A "axios/1.8.4" "https://www.reddit.com/search.json?q=configure%20neovim%20rust&sort=relevance&limit=10")
 ```
 
 Output: How-to format with solutions and code snippets
@@ -400,9 +400,9 @@ Action: Search mode within r/rust, how-to query type
 ```
 
 ```bash
-curl -s -A "axios/1.8.4" "https://www.reddit.com/r/rust/search.json?q=async%20best%20practices&restrict_sr=true&limit=10" | jq '
+jq '
   .data.children[] | .data | {title, author, subreddit, score, num_comments, permalink}
-'
+' <(curl -s -A "axios/1.8.4" "https://www.reddit.com/r/rust/search.json?q=async%20best%20practices&restrict_sr=true&limit=10")
 ```
 
 Output: How-to format
@@ -416,12 +416,12 @@ Action: Thread mode
 
 ```bash
 # Get post and comments in one fetch
-curl -s -A "axios/1.8.4" "https://www.reddit.com/r/programming/comments/abc123/title.json?sort=best&limit=10" | jq '
+jq '
   {
     post: .[0].data.children[0].data | {title, author, subreddit, score, selftext, num_comments},
     comments: [.[1].data.children[:10][] | select(.kind == "t1") | .data | {body, author, score}]
   }
-'
+' <(curl -s -A "axios/1.8.4" "https://www.reddit.com/r/programming/comments/abc123/title.json?sort=best&limit=10")
 ```
 
 Output: Thread analysis format
