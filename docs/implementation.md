@@ -17,12 +17,12 @@ User Request
          │ (miss)
          ▼
 ┌─────────────────┐
-│   WebFetch      │ ─── Fetch from user's device
+│  Bash + curl    │ ─── Fetch from user's device
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│  JSON Filter    │ ─── Strip noise, keep essentials
+│  jq Filter      │ ─── Strip noise, keep essentials
 └────────┬────────┘
          │
          ▼

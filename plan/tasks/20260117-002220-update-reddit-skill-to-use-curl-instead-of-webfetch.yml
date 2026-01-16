@@ -1,0 +1,75 @@
+title: "Update Reddit skill to use curl instead of WebFetch"
+
+purpose: |
+  Fix the Reddit skill that is currently broken due to WebFetch having reddit.com
+  on its domain blocklist. This prevents the skill from functioning at all. By
+  switching to curl with proper headers, users can search Reddit and analyze
+  threads from the terminal.
+
+context: |
+  Debugging session confirmed WebFetch returns "Claude Code is unable to fetch
+  from www.reddit.com" for any reddit.com URL. This is a Claude Code restriction,
+  not a Reddit-side block. Testing showed curl works fine with User-Agent header
+  (e.g., "axios/1.8.4" returns HTTP 200).
+
+start_date: "20260116-232758"
+end_date: "20260117-002220"
+
+description: |
+  Replace all WebFetch instructions in SKILL.md with curl-based approach using
+  Bash tool. Add jq commands for JSON parsing. Update documentation files to
+  reflect the new fetching method. Maintain existing output formatting, error
+  handling, and caching strategies.
+
+requirements:
+  - "Replace WebFetch tool references with curl commands via Bash tool"
+  - "Add User-Agent header to all curl commands (use 'axios/1.8.4')"
+  - "Add jq commands to parse and filter JSON responses"
+  - "Update error handling to use curl exit codes and HTTP status codes"
+  - "Update docs/implementation.md architecture diagram to show Bash/curl instead of WebFetch"
+  - "Update docs/overview.md if it references WebFetch"
+  - "Test the updated skill with a sample search query"
+
+success_criteria:
+  - "SKILL.md contains curl commands instead of WebFetch instructions"
+  - "All curl commands include User-Agent header"
+  - "jq commands extract required fields (title, author, score, etc.)"
+  - "Error handling covers HTTP 429, 404, 403, and curl failures"
+  - "Documentation files are consistent with SKILL.md changes"
+  - "Sample query '/reddit neovim plugins' returns formatted results"
+
+relevant_files:
+  # Documentation
+  - "docs/overview.md"
+  - "docs/implementation.md"
+  # Skill file to update
+  - ".claude/skills/reddit/SKILL.md"
+
+iterations:
+  - implementation:
+      summary: |
+        Replaced all WebFetch references with curl+jq commands in SKILL.md.
+        Updated fetching instructions, error handling, and usage examples.
+        Modified architecture diagram in implementation.md and updated overview.md.
+        Verified functionality with a test search query.
+      decisions:
+        - "Used 'axios/1.8.4' as User-Agent header per task context (proven to work)"
+        - "Added comprehensive error detection pattern with HTTP status code extraction"
+        - "Included curl exit code documentation for common network errors"
+    review:
+      result: "approved"
+      summary: |
+        Implementation fully satisfies all requirements. WebFetch successfully replaced
+        with curl+jq throughout SKILL.md. All curl commands include User-Agent header.
+        Error handling covers HTTP codes 429, 403, 404, 503 and curl exit codes. Live
+        test with 'neovim plugins' query returned valid JSON results with expected fields.
+      pass:
+        - "All WebFetch references replaced with curl commands in SKILL.md"
+        - "User-Agent header 'axios/1.8.4' present on all curl commands"
+        - "jq commands extract required fields (title, author, score, num_comments, etc.)"
+        - "Error handling covers HTTP 429, 404, 403, 503 and curl exit codes 0, 6, 7, 28, 35"
+        - "docs/implementation.md updated: WebFetch -> Bash + curl, JSON Filter -> jq Filter"
+        - "docs/overview.md updated: via WebFetch -> via curl"
+        - "Live test '/reddit neovim plugins' returned valid formatted results"
+      fail: []
+      defer: []

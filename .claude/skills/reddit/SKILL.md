@@ -12,7 +12,7 @@ triggers:
 
 # Reddit Skill
 
-Search Reddit and analyze threads directly from the terminal. Uses Reddit's public JSON API via WebFetch (no authentication required).
+Search Reddit and analyze threads directly from the terminal. Uses Reddit's public JSON API via curl and jq (no authentication required).
 
 ## Input Detection
 
@@ -45,18 +45,46 @@ Parse the query:
 
 ## Fetching Instructions
 
-Use the `WebFetch` tool to fetch Reddit JSON endpoints.
+Use the `Bash` tool with `curl` and `jq` to fetch and parse Reddit JSON endpoints. All curl commands must include a User-Agent header.
+
+### Base curl Command
+
+Always use this pattern for fetching:
+```bash
+curl -s -A "axios/1.8.4" -w "\n%{http_code}" "URL_HERE"
+```
+
+The `-w "\n%{http_code}"` appends the HTTP status code on a new line, enabling error detection.
 
 ### Search Request
 
-```
-URL: https://www.reddit.com/search.json?q={encoded_query}&sort=relevance&limit=10
-Prompt: Extract the search results. For each post, return: title, author, subreddit, score, num_comments, permalink, selftext (first 200 chars if present). Return as structured data.
+```bash
+# Build the search URL
+QUERY="your search terms"
+ENCODED_QUERY=$(printf '%s' "$QUERY" | jq -sRr @uri)
+URL="https://www.reddit.com/search.json?q=${ENCODED_QUERY}&sort=relevance&limit=10"
+
+# Fetch and parse
+curl -s -A "axios/1.8.4" "$URL" | jq '
+  .data.children[] | .data | {
+    title,
+    author,
+    subreddit,
+    score,
+    num_comments,
+    permalink,
+    selftext: (.selftext[:200]),
+    created_utc,
+    url,
+    is_self,
+    over_18
+  }
+'
 ```
 
 For subreddit-scoped search (when user specifies `site:r/subreddit`):
-```
-URL: https://www.reddit.com/r/{subreddit}/search.json?q={encoded_query}&restrict_sr=true&limit=10
+```bash
+URL="https://www.reddit.com/r/${SUBREDDIT}/search.json?q=${ENCODED_QUERY}&restrict_sr=true&limit=10"
 ```
 
 ### Thread Request
@@ -64,21 +92,52 @@ URL: https://www.reddit.com/r/{subreddit}/search.json?q={encoded_query}&restrict
 Convert the thread URL to JSON endpoint by inserting `.json` before any query parameters:
 - `reddit.com/r/rust/comments/abc123/title` -> `https://www.reddit.com/r/rust/comments/abc123/title.json?sort=best&limit=10`
 
-```
-URL: {thread_url}.json?sort=best&limit=10
-Prompt: Extract the thread data. Return: 1) Post info: title, author, subreddit, score, selftext. 2) Top 10 comments with their top 3 replies each. For each comment: body, author, score. Structure as JSON.
+```bash
+# Fetch thread (returns array: [post, comments])
+THREAD_URL="https://www.reddit.com/r/rust/comments/abc123/title.json?sort=best&limit=10"
+
+# Extract post info
+curl -s -A "axios/1.8.4" "$THREAD_URL" | jq '
+  .[0].data.children[0].data | {
+    title,
+    author,
+    subreddit,
+    score,
+    selftext,
+    num_comments,
+    upvote_ratio,
+    created_utc
+  }
+'
+
+# Extract comments with replies
+curl -s -A "axios/1.8.4" "$THREAD_URL" | jq '
+  [.[1].data.children[:10][] | select(.kind == "t1") | .data | {
+    body,
+    author,
+    score,
+    depth,
+    replies: (if .replies == "" then [] else
+      [.replies.data.children[:3][] | select(.kind == "t1") | .data | {
+        body,
+        author,
+        score
+      }]
+    end)
+  }]
+'
 ```
 
 ### Short URLs (redd.it)
 
 For `redd.it/{id}` URLs, expand to full URL:
-```
-https://www.reddit.com/comments/{id}.json?sort=best&limit=10
+```bash
+curl -s -A "axios/1.8.4" "https://www.reddit.com/comments/${ID}.json?sort=best&limit=10"
 ```
 
 ## JSON Field Filtering
 
-Instruct WebFetch to extract only essential fields.
+Use jq to extract only essential fields from the JSON response.
 
 ### For Posts
 
@@ -213,12 +272,37 @@ r/{subreddit} | {score} points | {num_comments} comments
 
 ## Error Handling
 
-Handle these error conditions gracefully:
+Handle these error conditions by checking curl exit codes and HTTP status codes.
+
+### Fetch Pattern with Error Detection
+
+```bash
+# Fetch with status code capture
+RESPONSE=$(curl -s -A "axios/1.8.4" -w "\n%{http_code}" "$URL")
+HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+
+# Check curl exit code
+if [ $? -ne 0 ]; then
+  echo "Network error: Unable to reach Reddit"
+  # Retry once after brief pause
+fi
+
+# Check HTTP status code
+case "$HTTP_CODE" in
+  200) echo "$BODY" | jq '...' ;;
+  429) echo "Rate limited - wait and retry" ;;
+  403) echo "Private subreddit - access denied" ;;
+  404) echo "Thread not found or deleted" ;;
+  503) echo "Reddit temporarily unavailable" ;;
+  *)   echo "Unexpected error: HTTP $HTTP_CODE" ;;
+esac
+```
 
 ### Rate Limiting (HTTP 429)
 
 ```
-1. Wait 3 seconds
+1. Wait 3 seconds: sleep 3
 2. Retry the request once
 3. If retry fails:
    "Reddit is rate limiting requests. Please wait a minute and try again."
@@ -238,16 +322,25 @@ The post may have been removed by moderators or the user."
 Try searching in public subreddits instead."
 ```
 
-### Timeout / Network Error
+### curl Exit Codes
 
+Common curl exit codes to handle:
+- `0`: Success
+- `6`: Could not resolve host (DNS failure)
+- `7`: Failed to connect (network unreachable)
+- `28`: Operation timeout
+- `35`: SSL/TLS handshake failure
+
+For non-zero exit codes:
 ```
-1. Retry the request once
+1. Retry the request once after a brief pause
 2. If retry fails:
    "Unable to reach Reddit. Please check your connection and try again."
 ```
 
 ### Empty Results
 
+When jq returns no results (`.data.children` is empty array):
 ```
 "No Reddit results found for '{query}'.
 Try:
@@ -289,27 +382,49 @@ Cache exists only within the current conversation. No disk storage (privacy).
 ```
 User: /reddit how to configure neovim for rust
 Action: Search mode, how-to query type
-Fetch: https://www.reddit.com/search.json?q=configure%20neovim%20rust&sort=relevance&limit=10
-Output: How-to format with solutions and code snippets
 ```
+
+```bash
+curl -s -A "axios/1.8.4" "https://www.reddit.com/search.json?q=configure%20neovim%20rust&sort=relevance&limit=10" | jq '
+  .data.children[] | .data | {title, author, subreddit, score, num_comments, permalink, selftext: (.selftext[:200])}
+'
+```
+
+Output: How-to format with solutions and code snippets
 
 ### Subreddit Search
 
 ```
 User: /reddit site:r/rust async best practices
 Action: Search mode within r/rust, how-to query type
-Fetch: https://www.reddit.com/r/rust/search.json?q=async%20best%20practices&restrict_sr=true&limit=10
-Output: How-to format
 ```
+
+```bash
+curl -s -A "axios/1.8.4" "https://www.reddit.com/r/rust/search.json?q=async%20best%20practices&restrict_sr=true&limit=10" | jq '
+  .data.children[] | .data | {title, author, subreddit, score, num_comments, permalink}
+'
+```
+
+Output: How-to format
 
 ### Thread Analysis
 
 ```
 User: /reddit https://reddit.com/r/programming/comments/abc123/title
 Action: Thread mode
-Fetch: https://www.reddit.com/r/programming/comments/abc123/title.json?sort=best&limit=10
-Output: Thread analysis format
 ```
+
+```bash
+# Get post and comments in one fetch
+curl -s -A "axios/1.8.4" "https://www.reddit.com/r/programming/comments/abc123/title.json?sort=best&limit=10" | jq '
+  {
+    post: .[0].data.children[0].data | {title, author, subreddit, score, selftext, num_comments},
+    comments: [.[1].data.children[:10][] | select(.kind == "t1") | .data | {body, author, score}]
+  }
+'
+```
+
+Output: Thread analysis format
 
 ### Follow-up
 
