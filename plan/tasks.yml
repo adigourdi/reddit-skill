@@ -1,0 +1,8 @@
+# Task Registry
+# Completed tasks are archived here
+
+tasks:
+  - timestamp: "20260116-232436"
+    title: "Create Reddit skill for Claude Code with install script"
+    purpose: "Enable Claude Code users to search Reddit and analyze threads directly from their terminal."
+    file: "tasks/20260116-232436-create-reddit-skill.yml"

@@ -1,0 +1,95 @@
+title: "Create Reddit skill for Claude Code with install script"
+
+purpose: |
+  Enable Claude Code users to search Reddit and analyze threads directly from
+  their terminal. This overcomes Anthropic's lack of Reddit API licensing by
+  fetching content via WebFetch from the user's device.
+
+context: |
+  Specifications are complete in docs/overview.md and docs/implementation.md.
+  The skill uses Reddit's public JSON API (no authentication required) and
+  should be installable via a simple symlink to ~/.claude/skills/reddit.
+
+start_date: "20260116-230035"
+end_date: "20260116-232436"
+
+description: |
+  Create the skill file structure at ./.claude/skills/reddit/ containing SKILL.md
+  (main logic) and references/api.md (endpoint details). Include an install.sh
+  script that symlinks from ./.claude/skills/reddit/ to ~/.claude/skills/reddit
+  for global availability.
+
+requirements:
+  - "Create directory structure: ./.claude/skills/reddit/ and ./.claude/skills/reddit/references/"
+  - "Write SKILL.md with frontmatter (name, description, triggers)"
+  - "SKILL.md must include input detection logic (URL vs search query)"
+  - "SKILL.md must include fetching instructions using WebFetch tool"
+  - "SKILL.md must include JSON field filtering rules (keep/discard lists)"
+  - "SKILL.md must include output formatting rules for 4 query types (how-to, info, list, thread)"
+  - "SKILL.md must include error handling (rate limits, 404, 403, timeouts)"
+  - "SKILL.md must include caching strategy (session-based via conversation context)"
+  - "Write references/api.md with Reddit JSON endpoint URLs and query parameters"
+  - "references/api.md must include field filtering lists for posts and comments"
+  - "references/api.md must include example response structures"
+  - "Write install.sh script that symlinks ./.claude/skills/reddit to ~/.claude/skills/reddit"
+  - "install.sh must create ~/.claude/skills/ if it does not exist"
+  - "install.sh must handle existing symlink (remove and recreate)"
+  - "install.sh must use absolute paths for the symlink source"
+
+success_criteria:
+  - "Directory ./.claude/skills/reddit/references/ exists"
+  - "SKILL.md contains all required sections: input detection, fetching, filtering, output formatting, error handling, caching"
+  - "references/api.md documents search, thread, and subreddit endpoints with parameters"
+  - "install.sh is executable and creates correct symlink when run"
+  - "Running install.sh creates ~/.claude/skills/reddit pointing to project's ./.claude/skills/reddit/"
+  - "Skill auto-detects reddit.com URLs vs search queries"
+  - "Search fetches 5-10 results, threads fetch 10 comments + 3 replies each"
+  - "Rate limit handling: retry once after 3 seconds on 429 response"
+  - "NSFW content included by default"
+
+relevant_files:
+  # Documentation (full spec)
+  - "docs/overview.md"
+  - "docs/implementation.md"
+
+iterations:
+  - implementation:
+      summary: |
+        Created complete Reddit skill for Claude Code with all required components.
+        Implemented SKILL.md with input detection, WebFetch instructions, field filtering,
+        four output formats, error handling, and caching strategy. Created api.md reference
+        with endpoint documentation and response examples. Install script creates symlink
+        with proper error handling.
+      decisions:
+        - "Used regex pattern for URL detection to cover all Reddit URL variants"
+        - "Structured SKILL.md with clear sections matching the specification categories"
+        - "Install script uses SCRIPT_DIR for absolute path resolution rather than pwd"
+    review:
+      result: "approved"
+      summary: |
+        All requirements and success criteria verified. Skill relocated to .claude/skills/reddit/
+        to function as a project-level skill (available only in this project) before global sharing.
+        Install script updated to symlink from new location. All files verified at new paths.
+      pass:
+        - "Directory structure ./.claude/skills/reddit/references/ exists at new location"
+        - "SKILL.md has valid frontmatter with name, description, and triggers fields"
+        - "SKILL.md includes input detection with URL regex and search mode handling"
+        - "SKILL.md includes WebFetch instructions for search and thread endpoints"
+        - "SKILL.md includes JSON field filtering rules (keep/discard for posts and comments)"
+        - "SKILL.md includes output formatting for all 4 query types (how-to, info, list, thread)"
+        - "SKILL.md includes error handling for 429, 404, 403, and timeout conditions"
+        - "SKILL.md includes session-based caching strategy via conversation context"
+        - "references/api.md documents search, thread, and subreddit endpoints with parameters"
+        - "references/api.md includes field filtering lists for posts and comments"
+        - "references/api.md includes example response structures (Search and Thread JSON)"
+        - "install.sh is executable and symlinks from .claude/skills/reddit/ to ~/.claude/skills/reddit"
+        - "install.sh creates ~/.claude/skills/ directory if it does not exist"
+        - "install.sh handles existing symlink by removing and recreating"
+        - "install.sh uses absolute paths via SCRIPT_DIR for symlink source"
+        - "Skill format validated against Claude Code skills documentation"
+      fail: []
+      defer: []
+      note:
+        - "Skill moved from ./skills/reddit/ to ./.claude/skills/reddit/ for project-level access"
+        - "This location makes the skill available only in this project before global sharing"
+        - "WebFetch tool rate limits may affect real-world usage independently of Reddit limits"
