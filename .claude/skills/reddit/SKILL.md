@@ -28,7 +28,7 @@ Use the Bash tool with curl and jq. All requests require a User-Agent header.
 
 Use this pattern for all Reddit requests:
 ```bash
-curl -s -A "axios/1.8.4" "$URL" | jq '...'
+jq '...' <(curl -s -A "axios/1.8.4" "$URL")
 ```
 
 For error detection, capture HTTP status:
@@ -121,15 +121,15 @@ See [ERRORS.md](./ERRORS.md) for full error reference.
 
 ### Search
 ```bash
-curl -s -A "axios/1.8.4" "https://www.reddit.com/search.json?q=neovim%20rust&limit=10" | jq '.data.children[] | .data | {title, subreddit, score}'
+jq '.data.children[] | .data | {title, subreddit, score}' <(curl -s -A "axios/1.8.4" "https://www.reddit.com/search.json?q=neovim%20rust&limit=10")
 ```
 
 ### Thread
 ```bash
-curl -s -A "axios/1.8.4" "https://www.reddit.com/r/rust/comments/abc123.json?sort=best&limit=10" | jq '{
+jq '{
   post: .[0].data.children[0].data | {title, score, selftext},
   comments: [.[1].data.children[:10][] | select(.kind == "t1") | .data | {body, author, score}]
-}'
+}' <(curl -s -A "axios/1.8.4" "https://www.reddit.com/r/rust/comments/abc123.json?sort=best&limit=10")
 ```
 
 ## Limitations

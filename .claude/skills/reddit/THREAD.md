@@ -138,8 +138,8 @@ treatment_tags, contest_mode, id, name
 ```bash
 THREAD_URL="https://www.reddit.com/r/rust/comments/abc123/title.json?sort=best&limit=10"
 
-curl -s -A "axios/1.8.4" "$THREAD_URL" | jq '{
+jq '{
   post: .[0].data.children[0].data | {title, author, subreddit, score, selftext, num_comments},
   comments: [.[1].data.children[:10][] | select(.kind == "t1") | .data | {body, author, score}]
-}'
+}' <(curl -s -A "axios/1.8.4" "$THREAD_URL")
 ```

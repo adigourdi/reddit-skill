@@ -77,17 +77,17 @@ The fullname is `t3_{id}` where `id` is the post's ID.
 
 ### Basic Search
 ```bash
-curl -s -A "axios/1.8.4" "https://www.reddit.com/search.json?q=neovim%20rust&sort=relevance&limit=10" | jq '.data.children[] | .data | {title, subreddit, score}'
+jq '.data.children[] | .data | {title, subreddit, score}' <(curl -s -A "axios/1.8.4" "https://www.reddit.com/search.json?q=neovim%20rust&sort=relevance&limit=10")
 ```
 
 ### Subreddit Search
 ```bash
-curl -s -A "axios/1.8.4" "https://www.reddit.com/r/rust/search.json?q=async%20best%20practices&restrict_sr=true&limit=10" | jq '.data.children[] | .data | {title, score, permalink}'
+jq '.data.children[] | .data | {title, score, permalink}' <(curl -s -A "axios/1.8.4" "https://www.reddit.com/r/rust/search.json?q=async%20best%20practices&restrict_sr=true&limit=10")
 ```
 
 ### Top Posts This Week
 ```bash
-curl -s -A "axios/1.8.4" "https://www.reddit.com/r/programming/top.json?t=week&limit=10" | jq '.data.children[] | .data | {title, score}'
+jq '.data.children[] | .data | {title, score}' <(curl -s -A "axios/1.8.4" "https://www.reddit.com/r/programming/top.json?t=week&limit=10")
 ```
 
 ## Fetch Limits

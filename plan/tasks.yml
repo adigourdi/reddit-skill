@@ -18,3 +18,7 @@ tasks:
     title: "Refactor Reddit skill for clarity and progressive disclosure"
     purpose: "The Reddit skill SKILL.md has grown to 457 lines with redundant patterns, fictional features, and overly prescriptive formatting templates."
     file: "tasks/20260117-004919-refactor-reddit-skill.yml"
+  - timestamp: "20260117-173520"
+    title: "Fix curl+jq pipe patterns in Reddit skill files"
+    purpose: "Restore the process substitution syntax for curl+jq commands that was reverted during a later refactoring."
+    file: "tasks/20260117-173520-fix-curl-jq-pipe-patterns.yml"
