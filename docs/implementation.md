@@ -17,7 +17,7 @@ User Request
          │ (miss)
          ▼
 ┌─────────────────┐
-│  Bash + curl    │ ─── Fetch from user's device
+│  Skill scripts  │ ─── curl from user's device, with session cookie
 └────────┬────────┘
          │
          ▼
@@ -48,6 +48,33 @@ Otherwise → Search mode
 - Pass query directly to Reddit search
 - User can include `site:r/subreddit` to limit scope
 - Default: search all of Reddit
+
+## Session Cookie
+
+Reddit's public `.json` endpoints stopped serving cookie-less clients: a bare
+`curl` gets HTTP 403 and an HTML "You've been blocked by network security" page
+regardless of User-Agent.
+
+`reddit-fetch.sh` handles this for every request:
+
+1. One request to `https://www.reddit.com/svc/shreddit/graphql` with a browser
+   User-Agent returns a cookie jar containing a `loid` cookie.
+2. The jar is cached at `~/.cache/claude-reddit/cookies.txt`.
+3. Every subsequent request sends that jar plus the same browser User-Agent.
+4. The jar is re-minted after 12 hours, or immediately when a request 403s.
+
+`loid` and a browser User-Agent are both required; either alone still 403s.
+No account, OAuth app, or API key is involved.
+
+## Scripts
+
+| Script | Role |
+|--------|------|
+| `reddit-search.sh` | Builds the search URL, filters results to essential fields |
+| `reddit-thread.sh` | Normalizes any thread URL/id, returns post + trimmed comment tree |
+| `reddit-fetch.sh` | Cookie bootstrap, retries, HTTP error mapping; used by the other two |
+
+The agent runs one script per request instead of assembling curl and jq itself.
 
 ## Reddit JSON API
 

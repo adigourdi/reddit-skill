@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Overcome Anthropic's lack of Reddit API licensing by fetching Reddit content directly from the user's device via `curl`. This skill enables Claude to search Reddit and analyze threads as part of research workflows.
+Overcome Anthropic's lack of Reddit API licensing by fetching Reddit content directly from the user's device via `curl` (with a session cookie Reddit requires of anonymous clients). This skill enables Claude to search Reddit and analyze threads as part of research workflows.
 
 ## Installation
 

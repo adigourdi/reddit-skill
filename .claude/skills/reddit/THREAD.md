@@ -2,144 +2,99 @@
 
 Detailed reference for analyzing Reddit threads. See [SKILL.md](./SKILL.md) for overview.
 
-## URL Pattern Detection
+Threads are fetched with `reddit-thread.sh`, which normalizes the URL, sends the
+session cookie Reddit now requires, and returns the post plus a trimmed comment
+tree. See [references/api.md](./references/api.md) for the raw response shape.
 
-Treat input as thread mode if it matches any of these patterns:
-```
-reddit.com/r/{subreddit}/comments/{id}
-old.reddit.com/r/{subreddit}/comments/{id}
-www.reddit.com/r/{subreddit}/comments/{id}
-redd.it/{id}
-```
+## Usage
 
-Regex pattern:
-```
-(reddit\.com|old\.reddit\.com|redd\.it).*/(comments/[a-z0-9]+|^[a-z0-9]+$)
+```bash
+~/.claude/skills/reddit/reddit-thread.sh <url|post_id> [options]
 ```
 
-## Converting URLs to JSON Endpoints
+| Option | Values | Default | Description |
+|--------|--------|---------|-------------|
+| `--comments` | number | 10 | Top-level comments to keep |
+| `--replies` | number | 3 | Replies kept per top-level comment |
+| `--sort` | best, top, new, controversial, old, qa | best | Comment sort order |
 
-### Standard URLs
-Insert `.json` before query parameters:
+## Accepted Input Forms
+
+The script extracts the post id from any of these:
+
 ```
-reddit.com/r/rust/comments/abc123/title
-  -> https://www.reddit.com/r/rust/comments/abc123/title.json?sort=best&limit=10
+https://www.reddit.com/r/rust/comments/abc123/some_title/
+https://old.reddit.com/r/rust/comments/abc123
+https://reddit.com/r/rust/comments/abc123/title?utm_source=share
+https://redd.it/abc123
+abc123
 ```
 
-### Short URLs (redd.it)
-Expand to full comments endpoint:
+Treat input as thread mode when it matches:
 ```
-redd.it/abc123
-  -> https://www.reddit.com/comments/abc123.json?sort=best&limit=10
+(reddit\.com|redd\.it)/.*(comments/[a-z0-9]+|^[a-z0-9]+$)
 ```
 
-## Thread JSON Structure
-
-Thread endpoints return an array with two elements:
-- `[0]` - Post data
-- `[1]` - Comments data
+## Output Shape
 
 ```json
-[
-  { "data": { "children": [{ "data": { /* post */ } }] } },
-  { "data": { "children": [{ "kind": "t1", "data": { /* comment */ } }, ...] } }
-]
-```
-
-## jq Filters
-
-### Extract Post
-```jq
-.[0].data.children[0].data | {
-  title,
-  author,
-  subreddit,
-  score,
-  selftext,
-  num_comments,
-  upvote_ratio,
-  created_utc
-}
-```
-
-### Extract Comments with Replies
-```jq
-[.[1].data.children[:10][] | select(.kind == "t1") | .data | {
-  body,
-  author,
-  score,
-  depth,
-  replies: (if (.replies | type) == "object" then
-    [.replies.data.children[:3][] | select(.kind == "t1") | .data | {
-      body,
-      author,
-      score
-    }]
-  else [] end)
-}]
-```
-
-### Combined (Post + Comments)
-```jq
 {
-  post: .[0].data.children[0].data | {title, author, subreddit, score, selftext, num_comments},
-  comments: [.[1].data.children[:10][] | select(.kind == "t1") | .data | {body, author, score}]
+  "post": {
+    "title": "...",
+    "author": "op_username",
+    "subreddit": "rust",
+    "score": 644,
+    "upvote_ratio": 0.99,
+    "num_comments": 67,
+    "permalink": "/r/rust/comments/abc123/title/",
+    "url": "https://...",
+    "selftext": "full post body",
+    "created": "2026-08-04T14:36:46Z"
+  },
+  "comments": [
+    {
+      "author": "commenter1",
+      "score": 261,
+      "body": "Top comment text...",
+      "replies": [
+        { "author": "commenter2", "score": 41, "body": "Reply text..." }
+      ]
+    }
+  ]
 }
 ```
 
-## Query Parameters
+"Load more comments" placeholders are dropped; only real comments are returned.
 
-| Parameter | Values | Description |
-|-----------|--------|-------------|
-| `sort` | best, top, new, controversial, old, qa | Comment sort order |
-| `limit` | 1-500 | Max comments to fetch |
-| `depth` | number | Max reply depth |
+## Examples
 
-## Comment Kind Types
+### Default fetch
+```bash
+~/.claude/skills/reddit/reddit-thread.sh "https://www.reddit.com/r/rust/comments/abc123/title/"
+```
 
-Filter by `kind` field:
-- `t1` - Comment
-- `more` - "Load more comments" placeholder (ignore)
+### Wider read of a big thread
+```bash
+~/.claude/skills/reddit/reddit-thread.sh abc123 --comments 25 --replies 3 --sort top
+```
 
-Always filter with `select(.kind == "t1")` to get actual comments.
+### Just the top-level opinions
+```bash
+~/.claude/skills/reddit/reddit-thread.sh abc123 \
+  | jq -r '.comments[] | "[\(.score)] u/\(.author): \(.body)"'
+```
+
+### Newest comments (for fast-moving threads)
+```bash
+~/.claude/skills/reddit/reddit-thread.sh abc123 --sort new --comments 15
+```
 
 ## Fetch Limits
 
 - **Top comments**: 10
 - **Replies per comment**: 3
 - **Max total**: ~40 comments (10 + 10x3)
-- **Sort**: "best" (Reddit's ranking algorithm)
+- **Sort**: `best` (Reddit's ranking algorithm)
 
-## Fields Reference
-
-### Post Fields (keep)
-```
-title, selftext, author, subreddit, score,
-upvote_ratio, num_comments, created_utc,
-permalink, url, is_self, over_18
-```
-
-### Comment Fields (keep)
-```
-body, author, score, created_utc, depth,
-replies (recursive, filtered)
-```
-
-### Fields to Discard
-```
-all_awardings, gilded, gildings,
-author_flair_*, link_flair_*,
-media_metadata, preview, thumbnail_*,
-treatment_tags, contest_mode, id, name
-```
-
-## Example
-
-```bash
-THREAD_URL="https://www.reddit.com/r/rust/comments/abc123/title.json?sort=best&limit=10"
-
-jq '{
-  post: .[0].data.children[0].data | {title, author, subreddit, score, selftext, num_comments},
-  comments: [.[1].data.children[:10][] | select(.kind == "t1") | .data | {body, author, score}]
-}' <(curl -s -A "axios/1.8.4" "$THREAD_URL")
-```
+Raise `--comments` when the user asks for a thorough read of a large thread; the
+script widens the underlying request so replies still come back.

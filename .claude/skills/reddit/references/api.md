@@ -1,5 +1,17 @@
 # Reddit JSON API Reference
 
+Raw reference for the endpoints and response shapes behind `reddit-search.sh`
+and `reddit-thread.sh`. Read this when you need an endpoint those two don't
+cover — fetch it through `reddit-fetch.sh`, which supplies the session cookie
+and User-Agent Reddit now requires:
+
+```bash
+~/.claude/skills/reddit/reddit-fetch.sh "<any reddit .json url>" | jq '...'
+```
+
+A plain `curl` against these URLs returns HTTP 403 and an HTML block page. See
+[../ERRORS.md](../ERRORS.md) for why.
+
 ## Endpoints
 
 ### Search
@@ -236,6 +248,13 @@ Reddit uses type prefixes in fullname identifiers:
 
 The `after` parameter for pagination uses fullnames (e.g., `t3_abc123`).
 
+## Authentication
+
+There is no OAuth token involved, but requests are not truly anonymous either:
+Reddit requires a session cookie (`loid`) together with a browser-like
+User-Agent. `reddit-fetch.sh` mints and caches that cookie; nothing else in the
+skill should talk to Reddit directly.
+
 ## Rate Limits
 
 - Unauthenticated: ~10 requests per minute
@@ -247,7 +266,7 @@ The `after` parameter for pagination uses fullnames (e.g., `t3_abc123`).
 | Status | Meaning | Typical Cause |
 |--------|---------|---------------|
 | 200 | Success | - |
-| 403 | Forbidden | Private subreddit |
+| 403 | Forbidden | Private subreddit, or missing/expired session cookie |
 | 404 | Not Found | Deleted post, invalid subreddit |
 | 429 | Rate Limited | Too many requests |
 | 503 | Service Unavailable | Reddit overloaded |

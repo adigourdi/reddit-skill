@@ -5,132 +5,132 @@ description: Search Reddit for opinions and discussions, analyze reddit.com thre
 
 # Reddit Skill
 
-Search Reddit and analyze threads directly from the terminal. Uses Reddit's public JSON API via curl and jq (no authentication required).
+Search Reddit and analyze threads using a resumable subagent. The skill runs in conversation context for continuity, but delegates fetching to a Task subagent that persists across invocations.
 
-## When to Use
+## Execution Pattern
 
-- User asks to search Reddit or find Reddit opinions
-- User provides a reddit.com URL to analyze
-- User wants to know "what Reddit says about" something
-- User asks to summarize a Reddit thread or discussion
+**You MUST use the Task tool to perform all Reddit fetching.** Do not run the scripts directly.
+
+### First invocation (no previous reddit subagent in conversation)
+
+Launch a new Task subagent:
+
+```
+Tool: Task
+subagent_type: general-purpose
+description: Reddit search
+prompt: <include the full Subagent Prompt below, with the user's query/URL filled in>
+```
+
+Note the returned **agent ID** — you will need it for follow-ups.
+
+### Follow-up invocations (previous reddit subagent exists in conversation)
+
+Resume the existing subagent using its agent ID:
+
+```
+Tool: Task
+subagent_type: general-purpose
+description: Reddit follow-up
+resume: <agent_id from previous invocation>
+prompt: <the user's new query or follow-up question>
+```
+
+The resumed subagent retains full context from all previous searches, so it can refine results, compare with earlier findings, or drill into threads it already fetched.
+
+### Presenting results
+
+Show the subagent's returned summary to the user. Keep it concise. Do not repeat raw JSON or script output.
+
+---
+
+## Subagent Prompt
+
+Use this as the Task prompt on first invocation. Replace `{USER_REQUEST}` with the actual query/URL and any relevant conversation context.
+
+```
+You are a Reddit search agent. Your job is to search Reddit and analyze threads using the scripts that ship with this skill.
+
+## User Request
+{USER_REQUEST}
 
 ## Request Types
 
-**Search Mode**: No URL in input - search Reddit for the query.
-
-**Thread Mode**: Input contains a reddit.com URL - fetch and analyze that thread.
+**Search Mode**: No URL provided — search Reddit for the query.
+**Thread Mode**: A reddit.com URL is provided — fetch and analyze that thread.
 
 ## Fetching Data
 
-Use the Bash tool with curl and jq. All requests require a User-Agent header.
+Run these scripts with Bash. They handle the session cookie, the User-Agent,
+retries and error messages for you, and print filtered JSON. Do not hand-roll
+curl calls — a bare curl to reddit.com/*.json is blocked with HTTP 403.
 
-### curl Template
+### Search
+~/.claude/skills/reddit/reddit-search.sh "<query>" [--sub <subreddit>] [--limit N] [--sort relevance|hot|top|new|comments] [--time hour|day|week|month|year|all] [--after <fullname>]
 
-Use this pattern for all Reddit requests:
-```bash
-jq '...' <(curl -s -A "axios/1.8.4" "$URL")
-```
+Returns: {after, results: [{title, author, subreddit, score, num_comments, permalink, url, is_self, over_18, created, selftext}]}
 
-For error detection, capture HTTP status:
-```bash
-RESPONSE=$(curl -s -A "axios/1.8.4" -w "\n%{http_code}" "$URL")
-HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-BODY=$(echo "$RESPONSE" | sed '$d')
-```
+Use --sub (or a "site:r/subreddit" prefix in the query, which the script picks
+up on its own) when the user names a specific subreddit. Paginate by passing
+the returned "after" value back via --after.
 
-### Search Endpoint
-```
-https://www.reddit.com/search.json?q={encoded_query}&sort=relevance&limit=10
-```
+### Thread
+~/.claude/skills/reddit/reddit-thread.sh <url|post_id> [--comments N] [--replies N] [--sort best|top|new|controversial|old|qa]
 
-Encode query: `printf '%s' "$QUERY" | jq -sRr @uri`
+Accepts any reddit.com/r/<sub>/comments/<id>/... URL, an old.reddit.com or
+redd.it short link, or a bare post id.
 
-For subreddit-scoped search (user specifies `site:r/subreddit`):
-```
-https://www.reddit.com/r/{subreddit}/search.json?q={query}&restrict_sr=true&limit=10
-```
+Returns: {post: {...}, comments: [{author, score, body, replies: [...]}]}
 
-See [SEARCH.md](./SEARCH.md) for full search reference.
+### Narrowing output
+Pipe either script through jq when you only need part of the result, e.g.
+  ~/.claude/skills/reddit/reddit-search.sh "rust async" --limit 10 | jq -r '.results[] | "\(.score)\t\(.title)\t\(.permalink)"'
 
-### Thread Endpoint
+## Reference Files
 
-Convert URL to JSON by appending `.json`:
-```
-reddit.com/r/rust/comments/abc123/title
-  -> https://www.reddit.com/r/rust/comments/abc123/title.json?sort=best&limit=10
-```
-
-For short URLs (redd.it/{id}):
-```
-https://www.reddit.com/comments/{id}.json?sort=best&limit=10
-```
-
-See [THREAD.md](./THREAD.md) for full thread reference.
-
-## Essential jq Filters
-
-### Search Results
-```jq
-.data.children[] | .data | {title, author, subreddit, score, num_comments, permalink}
-```
-
-### Thread Post
-```jq
-.[0].data.children[0].data | {title, author, subreddit, score, selftext, num_comments}
-```
-
-### Thread Comments
-```jq
-[.[1].data.children[:10][] | select(.kind == "t1") | .data | {body, author, score}]
-```
-
-## Output Guidance
-
-Adapt your output format to the user's intent. Trust your judgment.
-
-**For "how to" questions**: Extract actionable solutions and code snippets from discussions.
-
-**For "what is" or info questions**: Summarize key perspectives from relevant posts.
-
-**For thread analysis**: Identify consensus, key points, and notable dissenting views.
-
-**For lists/discovery**: Present titles with metadata so user can drill down.
-
-Keep output concise. Offer to expand on specific results if the user wants more detail.
-
-## Error Handling
-
-On HTTP errors or curl failures, inform the user and retry once if appropriate.
-
-| Code | Meaning |
-|------|---------|
-| 429 | Rate limited - wait and retry |
-| 403 | Private subreddit |
-| 404 | Thread deleted |
-
-See [ERRORS.md](./ERRORS.md) for full error reference.
+For detailed docs, read these files:
+- ~/.claude/skills/reddit/SEARCH.md — search options, sorting, pagination
+- ~/.claude/skills/reddit/THREAD.md — URL forms, comment/reply extraction
+- ~/.claude/skills/reddit/ERRORS.md — failure modes and what to tell the user
+- ~/.claude/skills/reddit/references/api.md — raw Reddit JSON API and response shapes
 
 ## Fetch Limits
-
 - Search: 10 results initially
 - Thread comments: Top 10 comments
 - Replies: Up to 3 per top comment
-- Max total: ~40 comments
 
-## Quick Examples
+## Error Handling
+The scripts exit non-zero and print a one-line reason to stderr. Common cases:
+| Message | Meaning |
+|---------|---------|
+| HTTP 429 | Rate limited — wait a minute before retrying |
+| HTTP 403 | Private subreddit (the scripts already retry a fresh session cookie) |
+| HTTP 404 | Thread deleted or id/subreddit misspelled |
+Relay the reason to the user rather than retrying in a loop.
 
-### Search
-```bash
-jq '.data.children[] | .data | {title, subreddit, score}' <(curl -s -A "axios/1.8.4" "https://www.reddit.com/search.json?q=neovim%20rust&limit=10")
+## Output
+Return a concise, well-formatted summary adapted to the user's intent:
+- "how to" questions: actionable solutions and code snippets
+- "what is" / info questions: key perspectives from relevant posts
+- thread analysis: consensus, key points, notable dissenting views
+- lists/discovery: titles with metadata
+
+Keep output concise. Mention that the user can ask follow-up questions to drill deeper.
 ```
 
-### Thread
-```bash
-jq '{
-  post: .[0].data.children[0].data | {title, score, selftext},
-  comments: [.[1].data.children[:10][] | select(.kind == "t1") | .data | {body, author, score}]
-}' <(curl -s -A "axios/1.8.4" "https://www.reddit.com/r/rust/comments/abc123.json?sort=best&limit=10")
-```
+## Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `reddit-search.sh` | Search Reddit, globally or within one subreddit |
+| `reddit-thread.sh` | Fetch a post with its top comments and replies |
+| `reddit-fetch.sh` | Low-level fetch of any Reddit JSON URL; used by the other two |
+
+`reddit-fetch.sh` exists because Reddit's public JSON endpoints now reject
+cookie-less requests with HTTP 403 and an HTML block page. It keeps a session
+cookie cached in `~/.cache/claude-reddit/cookies.txt`, re-mints it when stale or
+rejected, and sends a browser User-Agent. Pass it any Reddit JSON URL to reach
+endpoints the other two scripts don't cover.
 
 ## Limitations
 
@@ -138,9 +138,3 @@ jq '{
 - Public only: Cannot access private subreddits
 - Rate limited: ~10 requests/minute without auth
 - Text only: Cannot process images/videos in posts
-
-## Reference Files
-
-- [SEARCH.md](./SEARCH.md) - Search endpoints, parameters, pagination
-- [THREAD.md](./THREAD.md) - URL parsing, comment extraction, jq filters
-- [ERRORS.md](./ERRORS.md) - HTTP codes, curl failures, error messages

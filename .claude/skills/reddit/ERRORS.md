@@ -1,77 +1,32 @@
 # Reddit Error Handling Reference
 
-Error handling reference for Reddit API requests. See [SKILL.md](./SKILL.md) for overview.
+Error handling reference for the Reddit skill. See [SKILL.md](./SKILL.md) for overview.
 
-## HTTP Status Codes
+All three scripts print JSON on stdout and a single-line reason on stderr, and
+exit non-zero on failure. Relay the reason to the user; do not retry in a loop.
 
-| Code | Meaning | Action |
-|------|---------|--------|
-| 200 | Success | Process response |
-| 429 | Rate Limited | Wait 3s, retry once |
-| 403 | Forbidden | Private subreddit, inform user |
-| 404 | Not Found | Thread deleted/removed, inform user |
-| 503 | Unavailable | Reddit down, retry once |
+## Exit Codes
 
-## curl Exit Codes
+| Exit | Meaning |
+|------|---------|
+| 0 | Success, JSON on stdout |
+| 1 | Reddit or network error (message on stderr) |
+| 2 | Bad usage (missing query, unparseable URL) |
 
-| Code | Meaning | Action |
-|------|---------|--------|
-| 0 | Success | Process response |
-| 6 | DNS failure | Check connectivity, retry |
-| 7 | Connection failed | Network unreachable, retry |
-| 28 | Timeout | Retry once |
-| 35 | SSL failure | Retry once |
+## Failure Messages
 
-## Fetch Pattern with Error Detection
+| Message | Cause | What to tell the user |
+|---------|-------|-----------------------|
+| `HTTP 403 - private subreddit, or Reddit refused the session cookie.` | Private/quarantined subreddit, or the cookie refresh did not help | "That subreddit is private and can't be accessed. Try public subreddits instead." |
+| `HTTP 404 - thread or subreddit not found` | Deleted post, wrong id, misspelled subreddit | "This thread appears to be deleted or doesn't exist." |
+| `HTTP 429 - rate limited by Reddit.` | Too many requests (retried once after 3s already) | "Reddit is rate limiting requests. Wait a minute and try again." |
+| `HTTP 503 - Reddit is unavailable.` | Reddit overloaded | "Reddit is having trouble right now. Try again shortly." |
+| `Unable to reach Reddit (curl exit N).` | DNS, connectivity, TLS, timeout | "Unable to reach Reddit. Check the connection and try again." |
+| `Failed to obtain a Reddit session cookie` | The cookie bootstrap endpoint changed or is blocked | Reddit changed its anti-bot handling; the skill needs updating. |
+| `Could not find a post id in: ...` | Input isn't a recognizable thread URL | Ask the user for a full `reddit.com/r/<sub>/comments/<id>` link. |
 
-```bash
-RESPONSE=$(curl -s -A "axios/1.8.4" -w "\n%{http_code}" "$URL")
-CURL_EXIT=$?
-HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-BODY=$(echo "$RESPONSE" | sed '$d')
+Empty results are not an error — the script exits 0 with `results: []`. Say:
 
-# Check curl exit code first
-if [ $CURL_EXIT -ne 0 ]; then
-  echo "Network error (curl exit $CURL_EXIT)"
-  exit 1
-fi
-
-# Check HTTP status
-case "$HTTP_CODE" in
-  200) echo "$BODY" | jq '...' ;;
-  429) echo "Rate limited" ;;
-  403) echo "Private subreddit" ;;
-  404) echo "Not found" ;;
-  503) echo "Reddit unavailable" ;;
-  *)   echo "HTTP $HTTP_CODE" ;;
-esac
-```
-
-## Error Messages
-
-### Rate Limiting (429)
-```
-Reddit is rate limiting requests. Please wait a minute and try again.
-```
-
-### Not Found (404)
-```
-This Reddit thread appears to be deleted or doesn't exist.
-The post may have been removed by moderators or the user.
-```
-
-### Forbidden (403)
-```
-This subreddit is private and cannot be accessed.
-Try searching in public subreddits instead.
-```
-
-### Network Error
-```
-Unable to reach Reddit. Please check your connection and try again.
-```
-
-### Empty Results
 ```
 No Reddit results found for '{query}'.
 Try:
@@ -80,17 +35,33 @@ Try:
 - Broader search terms
 ```
 
+## Why the Session Cookie Exists
+
+Reddit's public `.json` endpoints no longer serve cookie-less clients: a bare
+`curl https://www.reddit.com/search.json?...` returns **HTTP 403** with an HTML
+"You've been blocked by network security" page, whatever User-Agent is used.
+
+`reddit-fetch.sh` works around this by:
+
+1. Requesting `https://www.reddit.com/svc/shreddit/graphql` once with a browser
+   User-Agent, which hands out a cookie jar containing a `loid` cookie.
+2. Caching that jar at `~/.cache/claude-reddit/cookies.txt`.
+3. Sending the jar plus the same browser User-Agent on every request.
+4. Re-minting the jar when it is older than 12 hours, or when a request comes
+   back 403.
+
+The `loid` cookie plus a browser User-Agent is the minimum that Reddit accepts;
+neither alone is enough.
+
 ## Retry Strategy
 
-1. On error, wait briefly (1-3 seconds)
-2. Retry the request once
-3. If retry fails, report the error to user
-4. Do NOT retry infinitely
+The scripts already retry once on 403 (with a fresh cookie) and once on 429
+(after 3 seconds). Beyond that, report the error — do not retry again.
 
 ## Rate Limits
 
-Reddit's unauthenticated API allows approximately:
+Unauthenticated access allows roughly:
 - ~10 requests per minute
 - ~100 requests per 10 minutes
 
-If hitting limits frequently, space out requests or fetch less data per request.
+If hitting limits, request fewer, larger fetches rather than many small ones.
