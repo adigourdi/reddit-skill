@@ -62,11 +62,15 @@ The script reads the tab's state after each load:
 - **Not a Reddit page**: the load settled but there is no `<shreddit-app>` on
   www.reddit.com.
 
-The last two, and `?captcha=1` coming back after the reload, bring the window
-up with a desktop notification and wait for the user. A brand-new profile gets
-"Prove your humanity" first; solving it lands on `?captcha=1`, so while waiting
-the script reloads the page whenever it has sat on `?captcha=1` for 5 s (up to
-three times). Loading
+The last two, and `?captcha=1` coming back after the reload, go to
+`clearCheck`. Reddit challenges the controlled Chrome (remote debugging on, a
+script attached) much harder than a plain one, so the controlled Chrome is quit
+and the profile reopened as a plain Chrome on the page. On the first try the
+script closes it again after ~12 s, which is enough for Reddit's JavaScript
+challenge (the `?solution=…&js_challenge=1&jsc_token=…` redirect) to pass by
+itself. If the reload is still blocked, the plain window opens again with a
+desktop notification and stays until the user closes it. The cookies carry over
+through the profile either way. Loading
 `https://www.reddit.com/?captcha=1` directly does not reproduce the interstitial:
 Reddit drops the parameter unless it is really rate-limiting. Set
 `REDDIT_CHECK_WAIT_MS` to shorten the wait when testing.

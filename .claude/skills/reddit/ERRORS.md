@@ -20,9 +20,10 @@ non-zero on failure. Relay the reason to the user; do not retry in a loop.
 |---------|-------|------------|
 | `The Reddit Chrome window is not running.` | `start` was not run, or Chrome was closed | Run `reddit-browser.mjs start`, then retry once |
 | `Reddit redirected to ?captcha=1; reloading the page once after a pause.` (stderr, not fatal) | Reddit's "whoa there" interstitial | Handled: the script waits 5 s and reloads the page it asked for, which is what clears it by hand |
-| `Reddit is showing a check (...)` or `...a page the script does not recognise (...)` (stderr, not fatal) | A check, `?captcha=1` again after the reload, or a page that is not a normal Reddit page; the message names its title, address and opening text | The window comes up and a desktop notification fires; the user clears it there. If the address ends in `?captcha=1`, loading `https://www.reddit.com/` has cleared it. The script waits up to 4 minutes, then minimizes and continues |
-| `Reddit's check was not cleared in time; the window still shows ...` | Nobody cleared it within 4 minutes | Tell the user what the window shows (it's in the message), then retry |
-| `Reddit is still showing ... after it was cleared once.` | Rate limited | Wait a few minutes, then retry |
+| `Reddit is showing a check (...). Passing it in a plain Chrome window for a few seconds...` (stderr, not fatal) | A check, `?captcha=1` again after the reload, or a page that is not a normal Reddit page; the message names its title, address and opening text | Handled: the controlled Chrome is quit and the profile opened as a plain Chrome for ~12 s, which passes Reddit's JavaScript challenge alone; then the controlled Chrome comes back minimized and the load is retried |
+| `Reddit is still showing a check (...). A plain Chrome window has opened...` (stderr, not fatal) | The unattended pass was not enough | A desktop notification fires; the user completes the check in that window (the audio challenge is often quicker) and closes it. The script waits up to 4 minutes |
+| `The check window was not closed within 240 s.` | The user did not close the plain window | Tell the user to complete the check and close the window, then retry |
+| `Reddit is still showing ... after it was cleared.` | Rate limited, or the check was not really completed | Wait a few minutes, then retry |
 | `HTTP 404 - thread not found` | Deleted or removed post, wrong id | "This thread appears to be deleted or doesn't exist." |
 | `Reddit did not finish loading the page within 20 s (...)` | Slow connection or Reddit throttling | Wait a minute, then retry once |
 | `Reading the page failed: ...` | Reddit changed its page markup | The skill needs updating; see [references/pages.md](./references/pages.md) |
@@ -50,7 +51,9 @@ HTML "You've been blocked by network security" page:
 - `oauth.reddit.com` with the anonymous `token_v2` cookie as a bearer token:
   blocked from curl, from curl with Chrome's TLS fingerprint (`curl_cffi`), and
   even from inside Chrome (as a page load and as a same-origin `fetch()`).
-- Headless Chrome is shown a "Prove your humanity" CAPTCHA.
+- Headless Chrome is shown a "Prove your humanity" CAPTCHA, and so is a normal
+  Chrome with remote debugging on, on a fresh profile. The same profile opened
+  as a plain Chrome passes Reddit's JavaScript challenge with no CAPTCHA.
 - RSS feeds still work but Reddit retires them on 2026-11-13, and the official
   Data API takes no new access requests after 2026-10-31.
 

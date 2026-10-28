@@ -16,9 +16,10 @@
 // minimizes it at once; `stop` quits it. The profile keeps Reddit's cookies, so
 // a check passed once carries over to later runs. Every page loads in the one
 // existing tab: opening a new tab would un-minimize the window. If Reddit shows a
-// check, the window is brought up for the person at the keyboard, and minimized
-// again once it clears. GNOME pulls off-screen windows back on screen, which is
-// why the window is minimized rather than moved away.
+// check, the profile is reopened as a plain Chrome for the person at the
+// keyboard (see clearCheck), then the controlled Chrome comes back minimized.
+// GNOME pulls off-screen windows back on screen, which is why the window is
+// minimized rather than moved away.
 //
 // Talks to Chrome over the DevTools protocol with Node's built-in WebSocket,
 // so it needs no npm packages.
@@ -117,15 +118,11 @@ async function open(port) {
     }
     const page = await connect(target.webSocketDebuggerUrl);
     const { windowId } = await browser.send("Browser.getWindowForTarget", { targetId: target.id });
-    const setWindow = (windowState) => browser.send("Browser.setWindowBounds", { windowId, bounds: { windowState } });
     return {
+        port,
         page,
         browser,
-        minimize: () => setWindow("minimized"),
-        show: async () => {
-            await setWindow("normal");
-            await page.send("Page.bringToFront");
-        },
+        minimize: () => browser.send("Browser.setWindowBounds", { windowId, bounds: { windowState: "minimized" } }),
         close: () => {
             page.close();
             browser.close();
@@ -178,53 +175,72 @@ function notify(message) {
     n.unref();
 }
 
-// Bring the window up and wait for the person at the keyboard to clear a check.
-// Solving Reddit's CAPTCHA lands on ?captcha=1 ("whoa there"), which is cleared
-// by loading the page again, so the wait does that itself, a few times at most.
-async function clearCheck(chrome, st, url) {
-    await chrome.show();
+// Clear a check in a Chrome nobody is driving.
+//
+// Reddit challenges the controlled Chrome (remote debugging on, a script
+// attached) far harder than a plain one: on a fresh profile the controlled
+// Chrome gets a "Prove your humanity" CAPTCHA, while a plain Chrome on the same
+// profile passes Reddit's JavaScript challenge by itself. So the controlled
+// Chrome is quit and the same profile opened as a plain Chrome (no DevTools
+// port, no extra flags). The cookies Reddit sets stay in the profile, and the
+// controlled Chrome is launched again, minimized, in place of the old one.
+//
+// `attended` false: the plain window is closed again after a few seconds, which
+// is all the JavaScript challenge needs. `attended` true (the first try did not
+// clear it): the user is notified, does the check, and closes the window.
+const UNATTENDED_MS = 12_000;
+
+async function clearCheck(chrome, st, url, attended) {
     const what = st?.captcha || st?.blocked ? "a check" : "a page the script does not recognise";
-    notify(`Reddit is showing ${what}. Clear it in the Chrome window that just came up.`);
-    process.stderr.write(
-        `Reddit is showing ${what} (${describe(st)}). The Chrome window has come up: complete the check there. ` +
-            `Waiting up to ${Math.round(CHECK_WAIT_MS / 1000)} s...\n`,
-    );
-    const deadline = Date.now() + CHECK_WAIT_MS;
-    let last = st;
-    let captchaSince = null;
-    let reloads = 0;
-    while (Date.now() < deadline) {
-        await sleep(1000);
-        last = (await chrome.page.evaluate(PAGE_STATE).catch(() => null)) || last;
-        if (last && last.reddit && !last.captcha && !last.blocked) {
-            await chrome.minimize();
-            return;
-        }
-        if (last?.captcha) {
-            captchaSince ??= Date.now();
-            if (Date.now() - captchaSince >= 5000 && reloads < 3) {
-                reloads++;
-                captchaSince = null;
-                process.stderr.write("The window is on ?captcha=1; reloading the page.\n");
-                await pace();
-                await chrome.page.send("Page.navigate", { url }).catch(() => {});
-            }
-        } else {
-            captchaSince = null;
+    chrome.close();
+    await quitChrome(chrome.port);
+
+    if (attended) {
+        notify(`Reddit is showing ${what}. Clear it in the Chrome window that just opened, then close that window.`);
+        process.stderr.write(
+            `Reddit is still showing ${what} (${describe(st)}). A plain Chrome window has opened on that page: ` +
+                "complete the check there (the audio challenge is often quicker), then close the window. A " +
+                "\"whoa there\" page after the check is fine to close too. " +
+                `Waiting up to ${Math.round(CHECK_WAIT_MS / 1000)} s...\n`,
+        );
+    } else {
+        process.stderr.write(`Reddit is showing ${what} (${describe(st)}). Passing it in a plain Chrome window for a few seconds...\n`);
+    }
+    const plain = spawn(CHROME, [`--user-data-dir=${PROFILE}`, "--no-first-run", "--no-default-browser-check", url], {
+        stdio: "ignore",
+    });
+    const exited = new Promise((res) => {
+        plain.on("exit", () => res(true));
+        plain.on("error", () => res(true));
+    });
+    const closed = await Promise.race([exited, sleep(attended ? CHECK_WAIT_MS : UNATTENDED_MS).then(() => false)]);
+    if (!closed) {
+        // SIGTERM is a clean shutdown for Chrome, so the cookies are saved.
+        plain.kill("SIGTERM");
+        await Promise.race([exited, sleep(10_000)]);
+        if (attended) {
+            throw new Fail(
+                `The check window was not closed within ${Math.round(CHECK_WAIT_MS / 1000)} s. ` +
+                    "Retry, and close the window once Reddit has loaded.",
+            );
         }
     }
-    throw new Fail(`Reddit's check was not cleared in time; the window still shows ${describe(last)}. Clear it there, then retry.`);
+    await sleep(500);
+
+    Object.assign(chrome, await open(await launchChrome()));
+    await chrome.minimize();
 }
 
 // Load `url` in the tab and wait until `readyExpr` is true, or the page has
 // settled as a normal Reddit page (an empty search, say). On the way:
 // - a redirect to ?captcha=1 is answered by reloading `url` once after a
 //   pause, which is what clears it by hand;
-// - any other check, or a page that is not Reddit's, is handed to the user,
-//   then the load is retried once.
+// - any other check, or a page that is not Reddit's, goes to clearCheck: first
+//   a plain Chrome that passes it alone, then, if that was not enough, the user;
+//   the load is retried after each.
 async function load(chrome, url, readyExpr) {
     let captchaRetried = false;
-    let handedOver = false;
+    let handovers = 0;
     for (;;) {
         await pace();
         // Marks the current document, so the old page is never mistaken for the new one.
@@ -264,11 +280,13 @@ async function load(chrome, url, readyExpr) {
         if (!st?.fresh || (!st.complete && !st.captcha && !st.blocked)) {
             throw new Fail(`Reddit did not finish loading the page within 20 s (${describe(st)}).`);
         }
-        if (handedOver) {
-            throw new Fail(`Reddit is still showing ${describe(st)} after it was cleared once. Wait a few minutes, then retry.`);
+        if (handovers === 2) {
+            throw new Fail(`Reddit is still showing ${describe(st)} after it was cleared. Wait a few minutes, then retry.`);
         }
-        await clearCheck(chrome, st, url);
-        handedOver = true;
+        await clearCheck(chrome, st, url, handovers === 1);
+        handovers++;
+        // The check often ends on ?captcha=1, which a fresh load clears.
+        captchaRetried = false;
     }
 }
 
@@ -284,41 +302,56 @@ async function readPage(url, readyExpr, extractExpr) {
 
 // --- Commands ----------------------------------------------------------------
 
+// Launch the controlled Chrome and return its DevTools port.
+async function launchChrome() {
+    mkdirSync(PROFILE, { recursive: true });
+    rmSync(PORT_FILE, { force: true });
+    const chrome = spawn(
+        CHROME,
+        [
+            "--remote-debugging-port=0",
+            `--user-data-dir=${PROFILE}`,
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--window-size=1100,900",
+            // A minimized window must still load and render pages at full speed.
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--disable-background-timer-throttling",
+            "about:blank",
+        ],
+        { stdio: "ignore", detached: true },
+    );
+    let chromeError = null;
+    chrome.on("error", (e) => (chromeError = e));
+    chrome.unref();
+    let port = null;
+    const deadline = Date.now() + 20_000;
+    while (!port && !chromeError && Date.now() < deadline) {
+        await sleep(200);
+        port = await runningPort();
+    }
+    if (chromeError) throw new Fail(`Could not start Chrome (${CHROME}): ${chromeError.message}`);
+    if (!port) throw new Fail("Chrome did not open a DevTools port in time.");
+    return port;
+}
+
+// Quit the controlled Chrome and wait until it has let go of the profile.
+async function quitChrome(port) {
+    const { webSocketDebuggerUrl } = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
+    const browser = await connect(webSocketDebuggerUrl);
+    await browser.send("Browser.close").catch(() => {});
+    browser.close();
+    for (let i = 0; i < 40 && (await runningPort()); i++) await sleep(250);
+    // The profile lock outlives the DevTools port by a moment.
+    await sleep(500);
+}
+
 async function start() {
     if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
         throw new Fail("No display available: the Reddit bridge needs a desktop session for its Chrome window.");
     }
-    let port = await runningPort();
-    if (!port) {
-        mkdirSync(PROFILE, { recursive: true });
-        rmSync(PORT_FILE, { force: true });
-        const chrome = spawn(
-            CHROME,
-            [
-                "--remote-debugging-port=0",
-                `--user-data-dir=${PROFILE}`,
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--window-size=1100,900",
-                // A minimized window must still load and render pages at full speed.
-                "--disable-backgrounding-occluded-windows",
-                "--disable-renderer-backgrounding",
-                "--disable-background-timer-throttling",
-                "about:blank",
-            ],
-            { stdio: "ignore", detached: true },
-        );
-        let chromeError = null;
-        chrome.on("error", (e) => (chromeError = e));
-        chrome.unref();
-        const deadline = Date.now() + 20_000;
-        while (!port && !chromeError && Date.now() < deadline) {
-            await sleep(200);
-            port = await runningPort();
-        }
-        if (chromeError) throw new Fail(`Could not start Chrome (${CHROME}): ${chromeError.message}`);
-        if (!port) throw new Fail("Chrome did not open a DevTools port in time.");
-    }
+    const port = (await runningPort()) || (await launchChrome());
     const chrome = await open(port);
     try {
         await chrome.minimize();
@@ -341,12 +374,7 @@ async function stop() {
         process.stdout.write("The Reddit Chrome window is not running.\n");
         return;
     }
-    const { webSocketDebuggerUrl } = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
-    const browser = await connect(webSocketDebuggerUrl);
-    await browser.send("Browser.close").catch(() => {});
-    browser.close();
-    // Wait for Chrome to let go of the profile, so an immediate `start` works.
-    for (let i = 0; i < 20 && (await runningPort()); i++) await sleep(250);
+    await quitChrome(port);
     process.stdout.write("Closed the Reddit Chrome window.\n");
 }
 

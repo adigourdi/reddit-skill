@@ -75,9 +75,10 @@ after an error:
 ~/.claude/skills/reddit/reddit-browser.mjs stop
 
 `start` takes a few seconds and is a no-op if Chrome is already open. If Reddit
-asks for a check, `start` (or a fetch) brings the window up, sends the user a
-desktop notification, and waits up to 4 minutes for them to clear it; that is
-expected, not a hang. A redirect to `?captcha=1` is retried once on its own.
+asks for a check, the script first passes it on its own in a plain Chrome window
+(about 15 s). If that is not enough it notifies the user and waits up to 4
+minutes for them to clear the check and close the window; that is expected, not
+a hang.
 
 ### Search
 ~/.claude/skills/reddit/reddit-search.sh "<query>" [--sub <subreddit>] [--limit N] [--sort relevance|hot|top|new|comments] [--time hour|day|week|month|year|all]

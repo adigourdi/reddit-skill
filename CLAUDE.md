@@ -34,8 +34,13 @@ install.sh                # Symlinks the skill into ~/.claude/skills/reddit
   Node 22's built-in WebSocket, so there are no npm deps. No account, OAuth
   app, or API key is involved.
 - **The subagent owns the browser.** SKILL.md has it run `start` first and
-  `stop` before it answers. A Reddit check brings the window up and the script
-  waits (up to 4 min) for the user, then minimizes it again.
+  `stop` before it answers.
+- **Checks are cleared in a plain Chrome.** Reddit gives the controlled Chrome
+  (remote debugging on) a CAPTCHA on a fresh profile, but a plain Chrome on the
+  same profile passes the JavaScript challenge alone. So on a check the script
+  quits the controlled Chrome, opens the profile plainly for ~12 s, relaunches
+  and retries; only if that fails does the user get a notification and a window
+  to clear and close (up to 4 min).
 - **Extractor code runs in the page.** It sits in template strings in
   `reddit-browser.mjs`, so backslashes in its regexes must be doubled.
 - **Never hand-roll curl in the skill docs.** Every fetch goes through a script.
