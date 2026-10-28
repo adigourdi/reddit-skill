@@ -2,10 +2,9 @@
 
 Detailed reference for searching Reddit. See [SKILL.md](./SKILL.md) for overview.
 
-All searching goes through `reddit-search.sh`, which builds the URL, sends the
-session cookie Reddit now requires, and filters the response down to the useful
-fields. See [references/api.md](./references/api.md) for the raw endpoints
-behind it.
+All searching goes through `reddit-search.sh`, which builds a reddit.com search
+URL, loads it in the Reddit Chrome window, and reads the results off the page.
+See [references/pages.md](./references/pages.md) for the elements it reads.
 
 ## Usage
 
@@ -16,10 +15,9 @@ behind it.
 | Option | Values | Default | Description |
 |--------|--------|---------|-------------|
 | `--sub` | subreddit name | - | Restrict the search to one subreddit |
-| `--limit` | 1-100 | 10 | Number of results |
+| `--limit` | 1-25 | 10 | Number of results (first page only) |
 | `--sort` | relevance, hot, top, new, comments | relevance | Sort order |
 | `--time` | hour, day, week, month, year, all | all | Time window |
-| `--after` | fullname (`t3_abc123`) | - | Pagination cursor |
 
 A `site:r/subreddit` prefix inside the query is recognized automatically and is
 equivalent to passing `--sub`.
@@ -28,7 +26,6 @@ equivalent to passing `--sub`.
 
 ```json
 {
-  "after": "t3_abc123",
   "results": [
     {
       "title": "...",
@@ -37,15 +34,15 @@ equivalent to passing `--sub`.
       "score": 342,
       "num_comments": 89,
       "permalink": "/r/rust/comments/abc123/title/",
-      "url": "https://example.com/article",
-      "is_self": false,
       "over_18": false,
-      "created": "2026-08-04T14:36:46Z",
-      "selftext": "first 300 characters of the body..."
+      "created": "2026-08-04T14:36:46.000000+0000"
     }
   ]
 }
 ```
+
+The search page shows no post bodies, so there is no `selftext`; fetch the
+thread for it. A field the page did not show comes back as `null`.
 
 ## Examples
 
@@ -71,25 +68,17 @@ equivalent to passing `--sub`.
   | jq -r '.results[] | "\(.score)\tr/\(.subreddit)\t\(.title)\t\(.permalink)"'
 ```
 
-### Pagination
-```bash
-AFTER=$(~/.claude/skills/reddit/reddit-search.sh "rust gamedev" --limit 10 | jq -r .after)
-~/.claude/skills/reddit/reddit-search.sh "rust gamedev" --limit 10 --after "$AFTER"
-```
-
 ## Subreddit Listings
 
-`reddit-search.sh` only searches. For a subreddit's hot/new/top listing, use the
-low-level fetcher:
+`reddit-search.sh` only searches. For a rough "what's popular in r/X" view, sort
+a broad search by top within the subreddit:
 
 ```bash
-~/.claude/skills/reddit/reddit-fetch.sh "https://www.reddit.com/r/rust/hot.json?limit=10" \
-  | jq '.data.children[].data | {title, score, permalink}'
+~/.claude/skills/reddit/reddit-search.sh "projector" --sub projectors --sort top --time month
 ```
 
 ## Fetch Limits
 
 - **Initial fetch**: 5-10 results
-- **Pagination**: Fetch more only on a "more" or "next" request
-- **Selftext**: Already truncated to 300 characters by the script
+- **More results**: there is no pagination; narrow the query or change `--sort`/`--time`
 - **Full content**: Fetch the thread with `reddit-thread.sh` when drilling down

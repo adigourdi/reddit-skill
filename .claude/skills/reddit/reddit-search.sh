@@ -10,30 +10,31 @@
 #   --limit  number of results (default 10)
 #   --sort   relevance | hot | top | new | comments   (default relevance)
 #   --time   hour | day | week | month | year | all   (default all)
-#   --after  pagination cursor, the "after" value from a previous run
 #
-# Output: {after, results: [{title, author, subreddit, score, num_comments,
-#                            permalink, url, is_self, over_18, created, selftext}]}
+# Reads Reddit's search page in the Reddit Chrome window (see
+# reddit-browser.mjs), so results are capped at the first page (about 25).
+#
+# Output: {results: [{title, author, subreddit, score, num_comments,
+#                     permalink, over_18, created}]}
 #
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-QUERY=""; SUB=""; LIMIT=10; SORT="relevance"; TIME="all"; AFTER=""
+QUERY=""; SUB=""; LIMIT=10; SORT="relevance"; TIME="all"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --sub)   SUB="${2#r/}"; shift 2 ;;
         --limit) LIMIT="$2"; shift 2 ;;
         --sort)  SORT="$2"; shift 2 ;;
         --time)  TIME="$2"; shift 2 ;;
-        --after) AFTER="$2"; shift 2 ;;
-        -h|--help) sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'; exit 0 ;;
+        -h|--help) sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'; exit 0 ;;
         *)       QUERY="${QUERY:+$QUERY }$1"; shift ;;
     esac
 done
 
 if [[ -z "${QUERY}" ]]; then
-    echo "usage: reddit-search.sh \"<query>\" [--sub <subreddit>] [--limit N] [--sort S] [--time T] [--after <fullname>]" >&2
+    echo "usage: reddit-search.sh \"<query>\" [--sub <subreddit>] [--limit N] [--sort S] [--time T]" >&2
     exit 2
 fi
 
@@ -45,20 +46,10 @@ fi
 
 ENCODED="$(printf '%s' "${QUERY}" | jq -sRr @uri)"
 if [[ -n "${SUB}" ]]; then
-    URL="https://www.reddit.com/r/${SUB}/search.json?q=${ENCODED}&restrict_sr=true"
+    URL="https://www.reddit.com/r/${SUB}/search/?q=${ENCODED}&restrict_sr=1"
 else
-    URL="https://www.reddit.com/search.json?q=${ENCODED}"
+    URL="https://www.reddit.com/search/?q=${ENCODED}"
 fi
-URL="${URL}&sort=${SORT}&t=${TIME}&limit=${LIMIT}${AFTER:+&after=${AFTER}}"
+URL="${URL}&type=posts&sort=${SORT}&t=${TIME}"
 
-BODY="$("${HERE}/reddit-fetch.sh" "${URL}")" || exit 1
-
-printf '%s' "${BODY}" | jq '{
-  after: .data.after,
-  results: [.data.children[] | .data | {
-    title, author, subreddit, score, num_comments, permalink, url,
-    is_self, over_18,
-    created: (.created_utc | todate),
-    selftext: (.selftext // "" | .[:300])
-  }]
-}'
+exec node "${HERE}/reddit-browser.mjs" search "${URL}" "${LIMIT}"

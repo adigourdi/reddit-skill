@@ -9,7 +9,8 @@ Search Reddit and analyze threads using a resumable subagent. The skill runs in 
 
 ## Execution Pattern
 
-**You MUST use the Task tool to perform all Reddit fetching.** Do not run the scripts directly.
+**You MUST use the Task tool to perform all Reddit fetching.** Do not run the
+scripts directly; the subagent opens and closes the browser they need.
 
 ### First invocation (no previous reddit subagent in conversation)
 
@@ -61,18 +62,31 @@ You are a Reddit search agent. Your job is to search Reddit and analyze threads 
 
 ## Fetching Data
 
-Run these scripts with Bash. They handle the session cookie, the User-Agent,
-retries and error messages for you, and print filtered JSON. Do not hand-roll
-curl calls — a bare curl to reddit.com/*.json is blocked with HTTP 403.
+Reddit blocks every non-browser client with HTTP 403, so these scripts read
+reddit.com pages in a minimized Chrome window, space requests out, and print
+filtered JSON. Do not hand-roll curl or WebFetch calls.
+
+### Open and close the browser
+First command, before any search or thread fetch (Bash timeout 300000):
+~/.claude/skills/reddit/reddit-browser.mjs start
+
+Last command, once you have everything and before you write your answer, also
+after an error:
+~/.claude/skills/reddit/reddit-browser.mjs stop
+
+`start` takes a few seconds and is a no-op if Chrome is already open. If Reddit
+asks for a check, `start` (or a fetch) brings the window up and waits up to 4
+minutes for the user to complete it; that is expected, not a hang.
 
 ### Search
-~/.claude/skills/reddit/reddit-search.sh "<query>" [--sub <subreddit>] [--limit N] [--sort relevance|hot|top|new|comments] [--time hour|day|week|month|year|all] [--after <fullname>]
+~/.claude/skills/reddit/reddit-search.sh "<query>" [--sub <subreddit>] [--limit N] [--sort relevance|hot|top|new|comments] [--time hour|day|week|month|year|all]
 
-Returns: {after, results: [{title, author, subreddit, score, num_comments, permalink, url, is_self, over_18, created, selftext}]}
+Returns: {results: [{title, author, subreddit, score, num_comments, permalink, over_18, created}]}
 
 Use --sub (or a "site:r/subreddit" prefix in the query, which the script picks
-up on its own) when the user names a specific subreddit. Paginate by passing
-the returned "after" value back via --after.
+up on its own) when the user names a specific subreddit. Results stop at the
+first page (about 25); there is no pagination. Search results carry no post
+body: fetch the thread for that.
 
 ### Thread
 ~/.claude/skills/reddit/reddit-thread.sh <url|post_id> [--comments N] [--replies N] [--sort best|top|new|controversial|old|qa]
@@ -92,7 +106,7 @@ For detailed docs, read these files:
 - ~/.claude/skills/reddit/SEARCH.md — search options, sorting, pagination
 - ~/.claude/skills/reddit/THREAD.md — URL forms, comment/reply extraction
 - ~/.claude/skills/reddit/ERRORS.md — failure modes and what to tell the user
-- ~/.claude/skills/reddit/references/api.md — raw Reddit JSON API and response shapes
+- ~/.claude/skills/reddit/references/pages.md — the page elements the scripts read
 
 ## Fetch Limits
 - Search: 10 results initially
@@ -103,10 +117,13 @@ For detailed docs, read these files:
 The scripts exit non-zero and print a one-line reason to stderr. Common cases:
 | Message | Meaning |
 |---------|---------|
-| HTTP 429 | Rate limited — wait a minute before retrying |
-| HTTP 403 | Private subreddit (the scripts already retry a fresh session cookie) |
-| HTTP 404 | Thread deleted or id/subreddit misspelled |
-Relay the reason to the user rather than retrying in a loop.
+| Reddit Chrome window is not running | You skipped `start`, or the window was closed: run `start`, then retry once |
+| Reddit's check was not completed in time | The user did not clear the check: stop and report it |
+| still showing a check or block page | Reddit is rate-limiting: stop and report it |
+| HTTP 404 - thread not found | Thread deleted or id misspelled |
+| did not finish loading the page | Slow or rate-limited; report it rather than retrying |
+Relay the reason rather than retrying in a loop. Always run `stop` before
+returning.
 
 ## Output
 Return a concise, well-formatted summary adapted to the user's intent:
@@ -124,17 +141,23 @@ Keep output concise. Mention that the user can ask follow-up questions to drill 
 |--------|---------|
 | `reddit-search.sh` | Search Reddit, globally or within one subreddit |
 | `reddit-thread.sh` | Fetch a post with its top comments and replies |
-| `reddit-fetch.sh` | Low-level fetch of any Reddit JSON URL; used by the other two |
+| `reddit-browser.mjs` | The browser: `start`, `status`, `stop`, and the page readers the other two call |
 
-`reddit-fetch.sh` exists because Reddit's public JSON endpoints now reject
-cookie-less requests with HTTP 403 and an HTML block page. It keeps a session
-cookie cached in `~/.cache/claude-reddit/cookies.txt`, re-mints it when stale or
-rejected, and sends a browser User-Agent. Pass it any Reddit JSON URL to reach
-endpoints the other two scripts don't cover.
+`reddit-browser.mjs` exists because Reddit now answers every scripted request,
+including `*.json` URLs and `oauth.reddit.com` with an anonymous token, with HTTP
+403, and shows headless Chrome a CAPTCHA. `start` launches a normal Chrome with
+its own profile in `~/.cache/claude-reddit/chrome-profile` (separate from the
+user's Chrome) and minimizes it; `stop` quits it. The profile keeps Reddit's
+cookies, so a check passed once carries over. Every page loads in the one tab,
+and the scripts read the post and comment data Reddit attaches to its
+`<shreddit-post>` and `<shreddit-comment>` elements. It needs a desktop session
+and Node 22 or newer; no npm packages.
 
 ## Limitations
 
 - Read-only: Cannot post, vote, or comment
 - Public only: Cannot access private subreddits
-- Rate limited: ~10 requests/minute without auth
+- Needs a desktop session: Chrome runs minimized, and comes up only for a Reddit check
+- Paced: at least 2.5 s between page loads; each load takes a few seconds
+- Search: first page of results only, no post bodies
 - Text only: Cannot process images/videos in posts

@@ -2,9 +2,10 @@
 
 Detailed reference for analyzing Reddit threads. See [SKILL.md](./SKILL.md) for overview.
 
-Threads are fetched with `reddit-thread.sh`, which normalizes the URL, sends the
-session cookie Reddit now requires, and returns the post plus a trimmed comment
-tree. See [references/api.md](./references/api.md) for the raw response shape.
+Threads are fetched with `reddit-thread.sh`, which normalizes the URL, loads the
+thread in the Reddit Chrome window, and returns the post plus a trimmed comment
+tree read off the page. See [references/pages.md](./references/pages.md) for the
+elements it reads.
 
 ## Usage
 
@@ -49,7 +50,7 @@ Treat input as thread mode when it matches:
     "permalink": "/r/rust/comments/abc123/title/",
     "url": "https://...",
     "selftext": "full post body",
-    "created": "2026-08-04T14:36:46Z"
+    "created": "2026-08-04T14:36:46.000000+0000"
   },
   "comments": [
     {
@@ -64,7 +65,10 @@ Treat input as thread mode when it matches:
 }
 ```
 
-"Load more comments" placeholders are dropped; only real comments are returned.
+Only comments the page has loaded are returned. The script scrolls a few times
+to load more when fewer than `--comments` top-level comments are showing, so a
+very large thread may still return fewer than asked. Collapsed or deeper replies
+are not expanded.
 
 ## Examples
 
@@ -97,4 +101,4 @@ Treat input as thread mode when it matches:
 - **Sort**: `best` (Reddit's ranking algorithm)
 
 Raise `--comments` when the user asks for a thorough read of a large thread; the
-script widens the underlying request so replies still come back.
+script scrolls further to load them, which makes the fetch take longer.

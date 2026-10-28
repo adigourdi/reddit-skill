@@ -1,8 +1,9 @@
 # claude-reddit
 
-A Claude Code skill that searches Reddit and analyzes threads by fetching
-Reddit's public JSON endpoints from the user's device. Anthropic has no Reddit
-API licensing, so `WebFetch` is blocked on reddit.com — hence the local `curl`.
+A Claude Code skill that searches Reddit and analyzes threads by reading
+reddit.com pages in a Chrome window on the user's device. Anthropic has no
+Reddit API licensing, so `WebFetch` is blocked on reddit.com, and Reddit now
+blocks every scripted client too — hence the browser.
 
 ## Layout
 
@@ -12,35 +13,52 @@ API licensing, so `WebFetch` is blocked on reddit.com — hence the local `curl`
 ├── SEARCH.md             # Search options, sorting, pagination
 ├── THREAD.md             # URL forms, comment/reply extraction
 ├── ERRORS.md             # Failure modes and what to tell the user
-├── references/api.md     # Raw Reddit JSON API and response shapes
+├── references/pages.md   # The page elements the scripts read
 ├── reddit-search.sh      # Search, globally or within one subreddit
 ├── reddit-thread.sh      # Post + top comments and replies
-└── reddit-fetch.sh       # Low-level fetch; used by the other two
+└── reddit-browser.mjs    # Chrome bridge: start/status/stop + page readers
 install.sh                # Symlinks the skill into ~/.claude/skills/reddit
 ```
 
 ## Things to know
 
-- **Reddit rejects cookie-less clients.** A bare `curl` to any `reddit.com/*.json`
-  returns HTTP 403 and an HTML block page. `reddit-fetch.sh` mints a `loid`
-  session cookie from `/svc/shreddit/graphql`, caches the jar at
-  `~/.cache/claude-reddit/cookies.txt`, and re-mints it after 12h or on a 403.
-  A browser User-Agent and the cookie are both required; either alone still 403s.
-  No account, OAuth app, or API key is involved.
+- **Reddit blocks scripts (since Oct 2026).** `*.json` on www.reddit.com,
+  `oauth.reddit.com` with the anonymous `token_v2`, curl with Chrome's TLS
+  fingerprint, and headless Chrome (CAPTCHA) all fail; ERRORS.md lists what was
+  tried. What works is a normal Chrome loading normal pages.
+  `reddit-browser.mjs start` launches one, minimized, with its own profile in
+  `~/.cache/claude-reddit/chrome-profile`; the readers load each page in its one
+  tab (a new tab would un-minimize the window) and read attributes off
+  `<shreddit-post>`, `<shreddit-comment>` and the search result units
+  (references/pages.md); `stop` quits it. It uses the DevTools protocol over
+  Node 22's built-in WebSocket, so there are no npm deps. No account, OAuth
+  app, or API key is involved.
+- **The subagent owns the browser.** SKILL.md has it run `start` first and
+  `stop` before it answers. A Reddit check brings the window up and the script
+  waits (up to 4 min) for the user, then minimizes it again.
+- **Extractor code runs in the page.** It sits in template strings in
+  `reddit-browser.mjs`, so backslashes in its regexes must be doubled.
 - **Never hand-roll curl in the skill docs.** Every fetch goes through a script.
   Earlier revisions inlined `curl ... | jq` and kept breaking on pipe buffering
   and on the 403; the scripts exist to end that.
+- **Page markup is the fragile part.** When a field comes back `null`, inspect
+  the live page's elements and update both `reddit-browser.mjs` and
+  references/pages.md.
 - **SKILL.md must run in conversation context**, not a fork. It launches a Task
   subagent and resumes it by agent ID on follow-ups; a fork would discard that
   ID and re-fetch cold every time.
 - Scripts exit non-zero with a one-line reason on stderr. Relay it, don't retry
-  in a loop — unauthenticated Reddit allows roughly 10 requests/minute.
+  in a loop. Page loads are spaced 2.5 s apart; Reddit showed a "whoa there"
+  rate-limit page after a burst of test requests.
 
 ## Testing a change
 
-Run the scripts directly; they print filtered JSON on stdout.
+Run the scripts directly; they print filtered JSON on stdout. Start the
+Chrome window first.
 
 ```bash
+.claude/skills/reddit/reddit-browser.mjs start
 .claude/skills/reddit/reddit-search.sh "rust async" --limit 3
 .claude/skills/reddit/reddit-thread.sh <url|post_id> --comments 3
+.claude/skills/reddit/reddit-browser.mjs stop
 ```

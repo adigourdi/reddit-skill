@@ -10,7 +10,8 @@
 #   --sort      best | top | new | controversial | old | qa  (default best)
 #
 # Accepts any reddit.com/r/<sub>/comments/<id>/... URL, an old.reddit.com or
-# redd.it short link, or a bare post id.
+# redd.it short link, or a bare post id. Reads the thread page in the Reddit
+# Chrome window (see reddit-browser.mjs).
 #
 # Output: {post: {...}, comments: [{author, score, body, replies: [...]}]}
 #
@@ -24,7 +25,7 @@ while [[ $# -gt 0 ]]; do
         --comments) COMMENTS="$2"; shift 2 ;;
         --replies)  REPLIES="$2"; shift 2 ;;
         --sort)     SORT="$2"; shift 2 ;;
-        -h|--help)  sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'; exit 0 ;;
+        -h|--help)  sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'; exit 0 ;;
         *)          INPUT="$1"; shift ;;
     esac
 done
@@ -46,24 +47,5 @@ else
     exit 2
 fi
 
-# Reddit counts every node against `limit`, so ask for enough to cover replies.
-URL="https://www.reddit.com/comments/${POST_ID}.json?sort=${SORT}&limit=$((COMMENTS * (REPLIES + 1) + 5))"
-
-BODY="$("${HERE}/reddit-fetch.sh" "${URL}")" || exit 1
-
-printf '%s' "${BODY}" | jq --argjson c "${COMMENTS}" --argjson r "${REPLIES}" '
-  def clean: {
-    author, score, body,
-    replies: (if (.replies | type) == "object"
-              then [.replies.data.children[] | select(.kind == "t1") | .data
-                    | {author, score, body}] [:$r]
-              else [] end)
-  };
-  {
-    post: (.[0].data.children[0].data | {
-      title, author, subreddit, score, upvote_ratio, num_comments,
-      permalink, url, selftext,
-      created: (.created_utc | todate)
-    }),
-    comments: [.[1].data.children[] | select(.kind == "t1") | .data | clean] [:$c]
-  }'
+exec node "${HERE}/reddit-browser.mjs" thread \
+    "https://www.reddit.com/comments/${POST_ID}/?sort=${SORT}" "${COMMENTS}" "${REPLIES}"
