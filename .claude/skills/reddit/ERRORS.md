@@ -19,11 +19,12 @@ non-zero on failure. Relay the reason to the user; do not retry in a loop.
 | Message | Cause | What to do |
 |---------|-------|------------|
 | `The Reddit Chrome window is not running.` | `start` was not run, or Chrome was closed | Run `reddit-browser.mjs start`, then retry once |
-| `Reddit is asking for a check` (stderr, not fatal) | Reddit wants a human check, or is rate-limiting the IP ("whoa there" page) | The window comes up on its own; the user completes the check. If the address ends in `?captcha=1`, loading `https://www.reddit.com/` again has cleared it. The script waits up to 4 minutes, then minimizes and continues |
-| `Reddit's check was not completed in time.` | Nobody cleared the check within 4 minutes | Tell the user to complete it in the window, then retry |
-| `Reddit is still showing a check or block page after it was cleared once.` | Rate limited | Wait a few minutes, then retry |
+| `Reddit redirected to ?captcha=1; reloading the page once after a pause.` (stderr, not fatal) | Reddit's "whoa there" interstitial | Handled: the script waits 5 s and reloads the page it asked for, which is what clears it by hand |
+| `Reddit is showing a check (...)` or `...a page the script does not recognise (...)` (stderr, not fatal) | A check, `?captcha=1` again after the reload, or a page that is not a normal Reddit page; the message names its title, address and opening text | The window comes up and a desktop notification fires; the user clears it there. If the address ends in `?captcha=1`, loading `https://www.reddit.com/` has cleared it. The script waits up to 4 minutes, then minimizes and continues |
+| `Reddit's check was not cleared in time; the window still shows ...` | Nobody cleared it within 4 minutes | Tell the user what the window shows (it's in the message), then retry |
+| `Reddit is still showing ... after it was cleared once.` | Rate limited | Wait a few minutes, then retry |
 | `HTTP 404 - thread not found` | Deleted or removed post, wrong id | "This thread appears to be deleted or doesn't exist." |
-| `Reddit did not finish loading the page within 20 s.` | Slow connection or Reddit throttling | Wait a minute, then retry once |
+| `Reddit did not finish loading the page within 20 s (...)` | Slow connection or Reddit throttling | Wait a minute, then retry once |
 | `Reading the page failed: ...` | Reddit changed its page markup | The skill needs updating; see [references/pages.md](./references/pages.md) |
 | `No display available` | `start` run without a desktop session (SSH, headless box) | The skill only works where a Chrome window can be shown |
 | `Chrome did not open a DevTools port in time.` | Chrome failed to start, often because another Chrome is using the profile | Run `reddit-browser.mjs stop`, then `start` |
@@ -64,6 +65,6 @@ new tab un-minimizes it, which is why every page loads in the one tab.
 
 `reddit-browser.mjs` waits at least 2.5 s between page loads (tracked in
 `~/.cache/claude-reddit/last-load`, so it holds across separate script runs).
-Reddit showed a "whoa there, pardner" rate-limit page after a burst of test
-requests, so keep fetches few: search once, then read the two or three most
+Reddit showed a "whoa there, pardner" rate-limit page (`/?captcha=1`) after a
+burst of test requests, and again on a brand-new profile, so keep fetches few: search once, then read the two or three most
 relevant threads rather than every result.

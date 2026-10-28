@@ -45,7 +45,7 @@ const SELF = new URL(import.meta.url).pathname;
 // Space page loads out; Reddit rate-limits an IP that loads pages too fast.
 const MIN_GAP_MS = 2500;
 // How long to wait for the person at the keyboard to clear a Reddit check.
-const CHECK_WAIT_MS = 4 * 60_000;
+const CHECK_WAIT_MS = Number(process.env.REDDIT_CHECK_WAIT_MS) || 4 * 60_000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -151,59 +151,124 @@ async function pace() {
     writeFileSync(LAST_LOAD, "");
 }
 
-const IS_BLOCKED = `(() => {
-    const t = document.title + " " + (document.body?.innerText || "").slice(0, 400);
-    return /captcha=1/.test(location.search) || /prove your humanity|blocked by network security|whoa there/i.test(t);
-})()`;
+// What the tab is showing. `captcha`: Reddit redirected to ?captcha=1, its
+// "whoa there" interstitial. `blocked`: a check or block page by its wording.
+// `reddit`: a normal Reddit page (the app shell is there).
+const PAGE_STATE = `({
+    fresh: !window.__redditBridgeOld,
+    captcha: /(^|[?&])captcha=1/.test(location.search.slice(1)),
+    blocked: /prove your humanity|blocked by network security|whoa there/i.test(
+        document.title + " " + (document.body?.innerText || "").slice(0, 400)),
+    reddit: location.hostname === "www.reddit.com" && !!document.querySelector("shreddit-app"),
+    complete: document.readyState === "complete",
+    title: document.title,
+    href: location.href,
+    text: (document.body?.innerText || "").replace(/\\s+/g, " ").trim().slice(0, 160),
+})`;
+
+const describe = (st) => (st ? `"${st.title}" at ${st.href}: ${st.text || "(no text)"}` : "an unreadable page");
+
+function notify(message) {
+    // Best effort: tells the user even when this runs inside a subagent.
+    const n = spawn("notify-send", ["--app-name=Reddit skill", "--urgency=critical", "Reddit needs you", message], {
+        stdio: "ignore",
+        detached: true,
+    });
+    n.on("error", () => {});
+    n.unref();
+}
 
 // Bring the window up and wait for the person at the keyboard to clear a check.
-async function clearCheck(chrome) {
+// Solving Reddit's CAPTCHA lands on ?captcha=1 ("whoa there"), which is cleared
+// by loading the page again, so the wait does that itself, a few times at most.
+async function clearCheck(chrome, st, url) {
     await chrome.show();
+    const what = st?.captcha || st?.blocked ? "a check" : "a page the script does not recognise";
+    notify(`Reddit is showing ${what}. Clear it in the Chrome window that just came up.`);
     process.stderr.write(
-        "Reddit is asking for a check: complete it in the Chrome window that just came up " +
-            "(if the address ends in ?captcha=1, load https://www.reddit.com/ instead). Waiting up to 4 minutes...\n",
+        `Reddit is showing ${what} (${describe(st)}). The Chrome window has come up: complete the check there. ` +
+            `Waiting up to ${Math.round(CHECK_WAIT_MS / 1000)} s...\n`,
     );
     const deadline = Date.now() + CHECK_WAIT_MS;
+    let last = st;
+    let captchaSince = null;
+    let reloads = 0;
     while (Date.now() < deadline) {
         await sleep(1000);
-        const blocked = await chrome.page.evaluate(IS_BLOCKED).catch(() => true);
-        const loaded = await chrome.page.evaluate(`!!document.querySelector("shreddit-app")`).catch(() => false);
-        if (!blocked && loaded) {
+        last = (await chrome.page.evaluate(PAGE_STATE).catch(() => null)) || last;
+        if (last && last.reddit && !last.captcha && !last.blocked) {
             await chrome.minimize();
             return;
         }
+        if (last?.captcha) {
+            captchaSince ??= Date.now();
+            if (Date.now() - captchaSince >= 5000 && reloads < 3) {
+                reloads++;
+                captchaSince = null;
+                process.stderr.write("The window is on ?captcha=1; reloading the page.\n");
+                await pace();
+                await chrome.page.send("Page.navigate", { url }).catch(() => {});
+            }
+        } else {
+            captchaSince = null;
+        }
     }
-    throw new Fail("Reddit's check was not completed in time. Complete it in the Reddit Chrome window, then retry.");
+    throw new Fail(`Reddit's check was not cleared in time; the window still shows ${describe(last)}. Clear it there, then retry.`);
 }
 
-// Load `url` in the tab and wait until `readyExpr` is true (or the page has
-// plainly finished). A check on the way is handed to the user, then the load
-// is retried once.
+// Load `url` in the tab and wait until `readyExpr` is true, or the page has
+// settled as a normal Reddit page (an empty search, say). On the way:
+// - a redirect to ?captcha=1 is answered by reloading `url` once after a
+//   pause, which is what clears it by hand;
+// - any other check, or a page that is not Reddit's, is handed to the user,
+//   then the load is retried once.
 async function load(chrome, url, readyExpr) {
-    for (let attempt = 0; ; attempt++) {
+    let captchaRetried = false;
+    let handedOver = false;
+    for (;;) {
         await pace();
         // Marks the current document, so the old page is never mistaken for the new one.
         await chrome.page.evaluate("window.__redditBridgeOld = true").catch(() => {});
         await chrome.page.send("Page.navigate", { url });
         const deadline = Date.now() + 20_000;
         const settledAt = Date.now() + 4000;
-        let blocked = false;
+        let st = null;
+        let ready = false;
         for (;;) {
             await sleep(500);
             // Evaluations can fail while the page swaps documents; just poll again.
-            const state = await chrome.page
-                .evaluate(`({ fresh: !window.__redditBridgeOld, blocked: ${IS_BLOCKED}, ready: !!(${readyExpr}),
-                              complete: document.readyState === "complete" })`)
-                .catch(() => null);
-            if (state?.fresh && state.blocked) {
-                blocked = true;
+            st = await chrome.page.evaluate(`({ ...${PAGE_STATE}, ready: !!(${readyExpr}) })`).catch(() => null);
+            if (!st?.fresh) {
+                if (Date.now() > deadline) break;
+                continue;
+            }
+            if (st.captcha || st.blocked) break;
+            if (st.ready) {
+                ready = true;
                 break;
             }
-            if (state?.fresh && (state.ready || (state.complete && Date.now() > settledAt))) return;
-            if (Date.now() > deadline) throw new Fail("Reddit did not finish loading the page within 20 s.");
+            if (st.complete && Date.now() > settledAt) {
+                ready = st.reddit;
+                break;
+            }
+            if (Date.now() > deadline) break;
         }
-        if (blocked && attempt > 0) throw new Fail("Reddit is still showing a check or block page after it was cleared once. Wait a few minutes, then retry.");
-        await clearCheck(chrome);
+        if (ready) return;
+        if (st?.captcha && !captchaRetried) {
+            captchaRetried = true;
+            process.stderr.write("Reddit redirected to ?captcha=1; reloading the page once after a pause.\n");
+            await sleep(5000);
+            continue;
+        }
+        // Still loading at the deadline: slow, not a check.
+        if (!st?.fresh || (!st.complete && !st.captcha && !st.blocked)) {
+            throw new Fail(`Reddit did not finish loading the page within 20 s (${describe(st)}).`);
+        }
+        if (handedOver) {
+            throw new Fail(`Reddit is still showing ${describe(st)} after it was cleared once. Wait a few minutes, then retry.`);
+        }
+        await clearCheck(chrome, st, url);
+        handedOver = true;
     }
 }
 

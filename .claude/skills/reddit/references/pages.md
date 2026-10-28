@@ -52,6 +52,21 @@ when fewer top-level comments are showing than asked for.
 
 ## Block pages
 
-The script treats a page as blocked when the URL has `captcha=1`, or the title
-or opening text mentions "Prove your humanity", "blocked by network security"
-or "whoa there".
+The script reads the tab's state after each load:
+
+- **`?captcha=1` in the address**: Reddit's "whoa there, pardner" rate-limit
+  interstitial. Reloading the requested page (without the parameter) after a
+  pause clears it, so the script does that once by itself.
+- **Check wording**: "Prove your humanity", "blocked by network security" or
+  "whoa there" in the title or opening text.
+- **Not a Reddit page**: the load settled but there is no `<shreddit-app>` on
+  www.reddit.com.
+
+The last two, and `?captcha=1` coming back after the reload, bring the window
+up with a desktop notification and wait for the user. A brand-new profile gets
+"Prove your humanity" first; solving it lands on `?captcha=1`, so while waiting
+the script reloads the page whenever it has sat on `?captcha=1` for 5 s (up to
+three times). Loading
+`https://www.reddit.com/?captcha=1` directly does not reproduce the interstitial:
+Reddit drops the parameter unless it is really rate-limiting. Set
+`REDDIT_CHECK_WAIT_MS` to shorten the wait when testing.
