@@ -10,7 +10,7 @@ elements it reads.
 ## Usage
 
 ```bash
-~/.claude/skills/reddit/reddit-thread.sh <url|post_id> [options]
+reddit-thread.sh <url|post_id> [options]
 ```
 
 | Option | Values | Default | Description |
@@ -74,23 +74,23 @@ are not expanded.
 
 ### Default fetch
 ```bash
-~/.claude/skills/reddit/reddit-thread.sh "https://www.reddit.com/r/rust/comments/abc123/title/"
+reddit-thread.sh "https://www.reddit.com/r/rust/comments/abc123/title/"
 ```
 
 ### Wider read of a big thread
 ```bash
-~/.claude/skills/reddit/reddit-thread.sh abc123 --comments 25 --replies 3 --sort top
+reddit-thread.sh abc123 --comments 25 --replies 3 --sort top
 ```
 
 ### Just the top-level opinions
 ```bash
-~/.claude/skills/reddit/reddit-thread.sh abc123 \
+reddit-thread.sh abc123 \
   | jq -r '.comments[] | "[\(.score)] u/\(.author): \(.body)"'
 ```
 
 ### Newest comments (for fast-moving threads)
 ```bash
-~/.claude/skills/reddit/reddit-thread.sh abc123 --sort new --comments 15
+reddit-thread.sh abc123 --sort new --comments 15
 ```
 
 ## Fetch Limits

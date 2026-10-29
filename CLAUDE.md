@@ -1,14 +1,16 @@
-# claude-reddit
+# reddit-skill
 
-A Claude Code skill that searches Reddit and analyzes threads by reading
-reddit.com pages in a Chrome window on the user's device. Anthropic has no
+A Claude Code plugin whose one skill searches Reddit and analyzes threads by
+reading reddit.com pages in a Chrome window on the user's device. Anthropic has no
 Reddit API licensing, so `WebFetch` is blocked on reddit.com, and Reddit now
 blocks every scripted client too — hence the browser.
 
 ## Layout
 
 ```
-.claude/skills/reddit/
+.claude-plugin/plugin.json  # Plugin manifest; listed in the adigourdi/claude-plugins marketplace
+README.md
+skills/reddit/
 ├── SKILL.md              # Entry point: delegates all fetching to a resumable Task subagent
 ├── SEARCH.md             # Search options, sorting, pagination
 ├── THREAD.md             # URL forms, comment/reply extraction
@@ -17,7 +19,6 @@ blocks every scripted client too — hence the browser.
 ├── reddit-search.sh      # Search, globally or within one subreddit
 ├── reddit-thread.sh      # Post + top comments and replies
 └── reddit-browser.mjs    # Chrome bridge: start/status/stop + page readers
-install.sh                # Symlinks the skill into ~/.claude/skills/reddit
 ```
 
 ## Things to know
@@ -49,6 +50,13 @@ install.sh                # Symlinks the skill into ~/.claude/skills/reddit
 - **Page markup is the fragile part.** When a field comes back `null`, inspect
   the live page's elements and update both `reddit-browser.mjs` and
   references/pages.md.
+- **Paths come from `${CLAUDE_SKILL_DIR}`.** Installed as a plugin, the skill
+  runs from `~/.claude/plugins/cache/<marketplace>/reddit/<version>/`, which
+  changes on every update. SKILL.md (the only file Claude Code substitutes)
+  uses `${CLAUDE_SKILL_DIR}`; SEARCH.md and THREAD.md call scripts by bare name.
+  Never hard-code `~/.claude/skills/reddit/`.
+- **Every commit is a release.** `plugin.json` has no `version`, so users with
+  auto-update get each commit pushed to `main`.
 - **SKILL.md must run in conversation context**, not a fork. It launches a Task
   subagent and resumes it by agent ID on follow-ups; a fork would discard that
   ID and re-fetch cold every time.
@@ -58,12 +66,15 @@ install.sh                # Symlinks the skill into ~/.claude/skills/reddit
 
 ## Testing a change
 
+To try the skill itself, run `claude --plugin-dir .` from the repo root: the
+working copy replaces the installed `reddit@adigourdi` for that session.
+
 Run the scripts directly; they print filtered JSON on stdout. Start the
 Chrome window first.
 
 ```bash
-.claude/skills/reddit/reddit-browser.mjs start
-.claude/skills/reddit/reddit-search.sh "rust async" --limit 3
-.claude/skills/reddit/reddit-thread.sh <url|post_id> --comments 3
-.claude/skills/reddit/reddit-browser.mjs stop
+skills/reddit/reddit-browser.mjs start
+skills/reddit/reddit-search.sh "rust async" --limit 3
+skills/reddit/reddit-thread.sh <url|post_id> --comments 3
+skills/reddit/reddit-browser.mjs stop
 ```

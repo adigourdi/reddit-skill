@@ -1,0 +1,15 @@
+{
+  "name": "reddit",
+  "description": "Search Reddit and digest threads, read-only, through a local Chrome window. No API key or account.",
+  "author": {
+    "name": "Abderrahim Digourdi"
+  },
+  "homepage": "https://github.com/adigourdi/reddit-skill",
+  "repository": "https://github.com/adigourdi/reddit-skill",
+  "keywords": [
+    "reddit",
+    "research",
+    "search"
+  ],
+  "license": "MIT"
+}

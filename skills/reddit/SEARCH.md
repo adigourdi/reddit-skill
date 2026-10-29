@@ -9,7 +9,7 @@ See [references/pages.md](./references/pages.md) for the elements it reads.
 ## Usage
 
 ```bash
-~/.claude/skills/reddit/reddit-search.sh "<query>" [options]
+reddit-search.sh "<query>" [options]
 ```
 
 | Option | Values | Default | Description |
@@ -48,23 +48,23 @@ thread for it. A field the page did not show comes back as `null`.
 
 ### Basic search
 ```bash
-~/.claude/skills/reddit/reddit-search.sh "neovim rust" --limit 10
+reddit-search.sh "neovim rust" --limit 10
 ```
 
 ### Subreddit-scoped search
 ```bash
-~/.claude/skills/reddit/reddit-search.sh "async best practices" --sub rust
-~/.claude/skills/reddit/reddit-search.sh "site:r/rust async best practices"
+reddit-search.sh "async best practices" --sub rust
+reddit-search.sh "site:r/rust async best practices"
 ```
 
 ### Top posts of the week
 ```bash
-~/.claude/skills/reddit/reddit-search.sh "compiler" --sub programming --sort top --time week
+reddit-search.sh "compiler" --sub programming --sort top --time week
 ```
 
 ### Compact list for scanning
 ```bash
-~/.claude/skills/reddit/reddit-search.sh "rust gamedev" --limit 10 \
+reddit-search.sh "rust gamedev" --limit 10 \
   | jq -r '.results[] | "\(.score)\tr/\(.subreddit)\t\(.title)\t\(.permalink)"'
 ```
 
@@ -74,7 +74,7 @@ thread for it. A field the page did not show comes back as `null`.
 a broad search by top within the subreddit:
 
 ```bash
-~/.claude/skills/reddit/reddit-search.sh "projector" --sub projectors --sort top --time month
+reddit-search.sh "projector" --sub projectors --sort top --time month
 ```
 
 ## Fetch Limits

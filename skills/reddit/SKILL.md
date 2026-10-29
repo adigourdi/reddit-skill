@@ -68,11 +68,11 @@ filtered JSON. Do not hand-roll curl or WebFetch calls.
 
 ### Open and close the browser
 First command, before any search or thread fetch (Bash timeout 300000):
-~/.claude/skills/reddit/reddit-browser.mjs start
+${CLAUDE_SKILL_DIR}/reddit-browser.mjs start
 
 Last command, once you have everything and before you write your answer, also
 after an error:
-~/.claude/skills/reddit/reddit-browser.mjs stop
+${CLAUDE_SKILL_DIR}/reddit-browser.mjs stop
 
 `start` takes a few seconds and is a no-op if Chrome is already open. If Reddit
 asks for a check, the script first passes it on its own in a plain Chrome window
@@ -81,7 +81,7 @@ minutes for them to clear the check and close the window; that is expected, not
 a hang.
 
 ### Search
-~/.claude/skills/reddit/reddit-search.sh "<query>" [--sub <subreddit>] [--limit N] [--sort relevance|hot|top|new|comments] [--time hour|day|week|month|year|all]
+${CLAUDE_SKILL_DIR}/reddit-search.sh "<query>" [--sub <subreddit>] [--limit N] [--sort relevance|hot|top|new|comments] [--time hour|day|week|month|year|all]
 
 Returns: {results: [{title, author, subreddit, score, num_comments, permalink, over_18, created}]}
 
@@ -91,7 +91,7 @@ first page (about 25); there is no pagination. Search results carry no post
 body: fetch the thread for that.
 
 ### Thread
-~/.claude/skills/reddit/reddit-thread.sh <url|post_id> [--comments N] [--replies N] [--sort best|top|new|controversial|old|qa]
+${CLAUDE_SKILL_DIR}/reddit-thread.sh <url|post_id> [--comments N] [--replies N] [--sort best|top|new|controversial|old|qa]
 
 Accepts any reddit.com/r/<sub>/comments/<id>/... URL, an old.reddit.com or
 redd.it short link, or a bare post id.
@@ -100,15 +100,16 @@ Returns: {post: {...}, comments: [{author, score, body, replies: [...]}]}
 
 ### Narrowing output
 Pipe either script through jq when you only need part of the result, e.g.
-  ~/.claude/skills/reddit/reddit-search.sh "rust async" --limit 10 | jq -r '.results[] | "\(.score)\t\(.title)\t\(.permalink)"'
+  ${CLAUDE_SKILL_DIR}/reddit-search.sh "rust async" --limit 10 | jq -r '.results[] | "\(.score)\t\(.title)\t\(.permalink)"'
 
 ## Reference Files
 
-For detailed docs, read these files:
-- ~/.claude/skills/reddit/SEARCH.md — search options, sorting, pagination
-- ~/.claude/skills/reddit/THREAD.md — URL forms, comment/reply extraction
-- ~/.claude/skills/reddit/ERRORS.md — failure modes and what to tell the user
-- ~/.claude/skills/reddit/references/pages.md — the page elements the scripts read
+For detailed docs, read these files. Their examples call the scripts by bare
+name; run them from ${CLAUDE_SKILL_DIR}/.
+- ${CLAUDE_SKILL_DIR}/SEARCH.md — search options, sorting, pagination
+- ${CLAUDE_SKILL_DIR}/THREAD.md — URL forms, comment/reply extraction
+- ${CLAUDE_SKILL_DIR}/ERRORS.md — failure modes and what to tell the user
+- ${CLAUDE_SKILL_DIR}/references/pages.md — the page elements the scripts read
 
 ## Fetch Limits
 - Search: 10 results initially
