@@ -1,5 +1,9 @@
 # reddit-skill
 
+> **Moved.** This plugin now lives in
+> [adigourdi/claude-plugins](https://github.com/adigourdi/claude-plugins/tree/main/plugins/reddit).
+> This repo is archived. Install commands below still work.
+
 A [Claude Code](https://code.claude.com) plugin that searches Reddit and digests
 threads for you: "what do people on r/rust say about async runtimes?", "summarize
 this thread", "find the consensus on projectors under $1000".
