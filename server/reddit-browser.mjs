@@ -11,38 +11,39 @@
 // score=… comment-count=…>, <shreddit-comment depth=… author=…>). So this
 // script loads those pages in Chrome and reads the elements.
 //
-// `start` launches Chrome with its own profile in
+// The first read launches Chrome with its own profile in
 // ~/.cache/claude-reddit/chrome-profile (separate from the user's Chrome) and
-// minimizes it at once; `stop` quits it. The profile keeps Reddit's cookies, so
-// a check passed once carries over to later runs. Every page loads in the one
-// existing tab: opening a new tab would un-minimize the window. If Reddit shows a
-// check, the profile is reopened as a plain Chrome for the person at the
-// keyboard (see clearCheck), then the controlled Chrome comes back minimized.
-// GNOME pulls off-screen windows back on screen, which is why the window is
-// minimized rather than moved away.
+// minimizes it at once; closeChrome quits it. The profile keeps Reddit's
+// cookies, so a check passed once carries over to later runs. Every page loads
+// in the one existing tab: opening a new tab would un-minimize the window. If
+// Reddit shows a check, the profile is reopened as a plain Chrome for the person
+// at the keyboard (see clearCheck), then the controlled Chrome comes back
+// minimized. GNOME pulls off-screen windows back on screen, which is why the
+// window is minimized rather than moved away.
 //
 // Talks to Chrome over the DevTools protocol with Node's built-in WebSocket,
-// so it needs no npm packages.
+// so it needs no npm packages. reddit-mcp.mjs serves these readers as MCP
+// tools and keeps one connection open between calls; run directly, this file
+// is a CLI for trying them by hand.
 //
-// Usage:  reddit-browser.mjs start | status | stop
-//         reddit-browser.mjs search <reddit search page url> <limit>
-//         reddit-browser.mjs thread <reddit thread url> <comments> <replies>
-// Output: `search` and `thread` print JSON on stdout. Errors go to stderr with
-//         a non-zero exit.
+// Usage:  reddit-browser.mjs status | stop
+//         reddit-browser.mjs search "<query>" [--sub S] [--limit N] [--sort S] [--time T]
+//         reddit-browser.mjs thread <url|post_id> [--comments N] [--replies N] [--sort S]
+// Output: `search` and `thread` print JSON on stdout and leave Chrome open
+//         for the next call. Errors go to stderr with a non-zero exit.
 //
 
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const CHROME = process.env.REDDIT_CHROME || "google-chrome";
 const CACHE_DIR = join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "claude-reddit");
 const PROFILE = join(CACHE_DIR, "chrome-profile");
 const PORT_FILE = join(PROFILE, "DevToolsActivePort");
 const LAST_LOAD = join(CACHE_DIR, "last-load");
-const HOME_URL = "https://www.reddit.com/";
-const SELF = new URL(import.meta.url).pathname;
 // Space page loads out; Reddit rate-limits an IP that loads pages too fast.
 const MIN_GAP_MS = 2500;
 // How long to wait for the person at the keyboard to clear a Reddit check.
@@ -50,7 +51,12 @@ const CHECK_WAIT_MS = Number(process.env.REDDIT_CHECK_WAIT_MS) || 4 * 60_000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-class Fail extends Error {}
+export class Fail extends Error {}
+
+// Progress notes (a check being cleared, a reload). The MCP server swaps this
+// out to pass them on with the tool result.
+let log = (line) => process.stderr.write(line + "\n");
+export const setLog = (fn) => (log = fn);
 
 // --- Chrome and DevTools plumbing -------------------------------------------
 
@@ -86,8 +92,15 @@ async function connect(wsUrl) {
             pending.delete(msg.id);
         }
     };
+    // The connection outlives single calls in the MCP server, so Chrome may
+    // close under it: fail what is waiting instead of hanging.
+    ws.onclose = () => {
+        for (const settle of pending.values()) settle({ error: { message: "the Reddit Chrome window closed" } });
+        pending.clear();
+    };
     const send = (method, params = {}) =>
         new Promise((res, rej) => {
+            if (ws.readyState !== WebSocket.OPEN) return rej(new Fail(`${method}: the Reddit Chrome window closed`));
             const id = ++nextId;
             pending.set(id, (msg) => (msg.error ? rej(new Fail(`${method}: ${msg.error.message}`)) : res(msg.result)));
             ws.send(JSON.stringify({ id, method, params }));
@@ -104,7 +117,7 @@ async function connect(wsUrl) {
         }
         return result.value;
     };
-    return { send, evaluate, close: () => ws.close() };
+    return { send, evaluate, open: () => ws.readyState === WebSocket.OPEN, close: () => ws.close() };
 }
 
 // The browser connection plus the one tab every page loads in.
@@ -123,6 +136,7 @@ async function open(port) {
         page,
         browser,
         minimize: () => browser.send("Browser.setWindowBounds", { windowId, bounds: { windowState: "minimized" } }),
+        alive: () => page.open() && browser.open(),
         close: () => {
             page.close();
             browser.close();
@@ -130,22 +144,45 @@ async function open(port) {
     };
 }
 
-async function requireChrome() {
+// The connection to the Chrome window, kept between reads.
+let current = null;
+
+// Connect to the Reddit Chrome window, launching it (minimized) if it is not
+// running. Reuses the open connection while that Chrome is still the one up.
+async function ensureChrome() {
     const port = await runningPort();
-    if (!port) throw new Fail(`The Reddit Chrome window is not running. Start it with: ${SELF} start`);
-    return open(port);
+    if (current && current.alive() && current.port === port) return current;
+    current?.close();
+    current = null;
+    if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
+        throw new Fail("No display available: the Reddit bridge needs a desktop session for its Chrome window.");
+    }
+    const chrome = await open(port || (await launchChrome()));
+    if (!port) await chrome.minimize();
+    current = chrome;
+    return chrome;
 }
+
+// When the last page load happened, from any process, and the last one this
+// process made (0 if none). The MCP server reads them to decide when Chrome is
+// idle and whether another session is still using it.
+export function lastLoadAt() {
+    try {
+        return statSync(LAST_LOAD).mtimeMs;
+    } catch {
+        return 0;
+    }
+}
+let ownLastLoad = 0;
+export const ownLastLoadAt = () => ownLastLoad;
 
 // Wait out the gap since the previous page load, then claim this one.
 async function pace() {
-    let last = 0;
-    try {
-        last = statSync(LAST_LOAD).mtimeMs;
-    } catch {}
-    const wait = last + MIN_GAP_MS - Date.now();
+    const wait = lastLoadAt() + MIN_GAP_MS - Date.now();
     if (wait > 0) await sleep(wait);
     mkdirSync(CACHE_DIR, { recursive: true });
     writeFileSync(LAST_LOAD, "");
+    ownLastLoad = lastLoadAt();
 }
 
 // What the tab is showing. `captcha`: Reddit redirected to ?captcha=1, its
@@ -197,14 +234,14 @@ async function clearCheck(chrome, st, url, attended) {
 
     if (attended) {
         notify(`Reddit is showing ${what}. Clear it in the Chrome window that just opened, then close that window.`);
-        process.stderr.write(
+        log(
             `Reddit is still showing ${what} (${describe(st)}). A plain Chrome window has opened on that page: ` +
                 "complete the check there (the audio challenge is often quicker), then close the window. A " +
                 "\"whoa there\" page after the check is fine to close too. " +
-                `Waiting up to ${Math.round(CHECK_WAIT_MS / 1000)} s...\n`,
+                `Waiting up to ${Math.round(CHECK_WAIT_MS / 1000)} s...`,
         );
     } else {
-        process.stderr.write(`Reddit is showing ${what} (${describe(st)}). Passing it in a plain Chrome window for a few seconds...\n`);
+        log(`Reddit is showing ${what} (${describe(st)}). Passing it in a plain Chrome window for a few seconds...`);
     }
     const plain = spawn(CHROME, [`--user-data-dir=${PROFILE}`, "--no-first-run", "--no-default-browser-check", url], {
         stdio: "ignore",
@@ -272,7 +309,7 @@ async function load(chrome, url, readyExpr) {
         if (ready) return;
         if (st?.captcha && !captchaRetried) {
             captchaRetried = true;
-            process.stderr.write("Reddit redirected to ?captcha=1; reloading the page once after a pause.\n");
+            log("Reddit redirected to ?captcha=1; reloading the page once after a pause.");
             await sleep(5000);
             continue;
         }
@@ -290,15 +327,20 @@ async function load(chrome, url, readyExpr) {
     }
 }
 
-async function readPage(url, readyExpr, extractExpr) {
-    const chrome = await requireChrome();
-    try {
-        await load(chrome, url, readyExpr);
-        return await chrome.page.evaluate(extractExpr);
-    } finally {
-        chrome.close();
-    }
+// One page read at a time: they all share the one tab.
+let queue = Promise.resolve();
+function serial(fn) {
+    const run = queue.then(fn, fn);
+    queue = run.catch(() => {});
+    return run;
 }
+
+const readPage = (url, readyExpr, extractExpr) =>
+    serial(async () => {
+        const chrome = await ensureChrome();
+        await load(chrome, url, readyExpr);
+        return chrome.page.evaluate(extractExpr);
+    });
 
 // --- Commands ----------------------------------------------------------------
 
@@ -347,35 +389,23 @@ async function quitChrome(port) {
     await sleep(500);
 }
 
-async function start() {
-    if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
-        throw new Fail("No display available: the Reddit bridge needs a desktop session for its Chrome window.");
-    }
-    const port = (await runningPort()) || (await launchChrome());
-    const chrome = await open(port);
-    try {
-        await chrome.minimize();
-        await load(chrome, HOME_URL, `!!document.querySelector("shreddit-app")`);
-        process.stdout.write("Reddit Chrome is ready (minimized). Run `stop` when done.\n");
-    } finally {
-        chrome.close();
-    }
-}
+export const isRunning = async () => !!(await runningPort());
 
-async function status() {
-    const port = await runningPort();
-    process.stdout.write(port ? "running\n" : "not running\n");
-    if (!port) process.exitCode = 3;
-}
+// Quit the Chrome window, if it is running. Returns whether it was.
+export const closeChrome = () =>
+    serial(async () => {
+        current?.close();
+        current = null;
+        const port = await runningPort();
+        if (port) await quitChrome(port);
+        return !!port;
+    });
 
-async function stop() {
-    const port = await runningPort();
-    if (!port) {
-        process.stdout.write("The Reddit Chrome window is not running.\n");
-        return;
-    }
-    await quitChrome(port);
-    process.stdout.write("Closed the Reddit Chrome window.\n");
+// Ask Chrome to quit without waiting for it: for a process that is being shut
+// down and has well under a second left.
+export async function closeChromeNow() {
+    if (!current?.alive()) return;
+    await Promise.race([current.browser.send("Browser.close").catch(() => {}), sleep(300)]);
 }
 
 // Search results: each result unit carries a JSON tracking context with the
@@ -475,27 +505,108 @@ const threadExtract = (comments, replies) => `(async () => {
     };
 })()`;
 
-function requireRedditUrl(url, usage) {
-    if (!/^https:\/\/www\.reddit\.com\//.test(url || "")) throw new Fail(usage);
-    return url;
+// --- Readers -----------------------------------------------------------------
+
+export const SEARCH_SORTS = ["relevance", "hot", "top", "new", "comments"];
+export const SEARCH_TIMES = ["hour", "day", "week", "month", "year", "all"];
+export const THREAD_SORTS = ["best", "top", "new", "controversial", "old", "qa"];
+
+function oneOf(value, allowed, name) {
+    if (!allowed.includes(value)) throw new Fail(`${name} must be one of: ${allowed.join(", ")}.`);
+    return value;
 }
 
-const [cmd, ...args] = process.argv.slice(2);
-try {
-    if (cmd === "start") await start();
-    else if (cmd === "status") await status();
-    else if (cmd === "stop") await stop();
-    else if (cmd === "search") {
-        const url = requireRedditUrl(args[0], "usage: reddit-browser.mjs search <https://www.reddit.com/...search/?q=...> <limit>");
-        const out = await readPage(url, SEARCH_READY, searchExtract(args[1] || 10));
-        process.stdout.write(JSON.stringify(out) + "\n");
+function count(value, fallback, max, name) {
+    if (value === undefined || value === null || value === "") return fallback;
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 0 || n > max) throw new Fail(`${name} must be a whole number from 0 to ${max}.`);
+    return n;
+}
+
+// Search Reddit, globally or within one subreddit. A "site:r/<sub>" in the
+// query is taken as the subreddit. Results come from the first page only
+// (about 25) and carry no post body.
+export async function search({ query, subreddit, sort = "relevance", time = "all", limit } = {}) {
+    let q = String(query ?? "").trim();
+    let sub = String(subreddit ?? "").trim().replace(/^\/?r\//, "");
+    const site = q.match(/site:r\/([A-Za-z0-9_]+)/);
+    if (site) {
+        sub ||= site[1];
+        q = q.replace(/site:r\/[A-Za-z0-9_]+/g, " ").replace(/\s+/g, " ").trim();
+    }
+    if (!q) throw new Fail("A search query is required.");
+    if (sub && !/^[A-Za-z0-9_]+$/.test(sub)) throw new Fail(`Not a subreddit name: ${sub}`);
+    oneOf(sort, SEARCH_SORTS, "sort");
+    oneOf(time, SEARCH_TIMES, "time");
+    const n = count(limit, 10, 25, "limit");
+    const base = sub
+        ? `https://www.reddit.com/r/${sub}/search/?q=${encodeURIComponent(q)}&restrict_sr=1`
+        : `https://www.reddit.com/search/?q=${encodeURIComponent(q)}`;
+    return readPage(`${base}&type=posts&sort=${sort}&t=${time}`, SEARCH_READY, searchExtract(n));
+}
+
+// The post id in any accepted thread reference: a reddit.com or
+// old.reddit.com /comments/<id> URL, a redd.it link, or a bare id.
+function postId(input) {
+    const s = String(input ?? "").trim();
+    const m = s.match(/\/comments\/([a-z0-9]+)/) || s.match(/redd\.it\/([a-z0-9]+)/) || s.match(/^([a-z0-9]+)$/);
+    if (!m) throw new Fail(`Could not find a post id in: ${s || "(empty)"}`);
+    return m[1];
+}
+
+// A post with its top comments and, under each, its first replies.
+export async function thread({ url, comments, replies, sort = "best" } = {}) {
+    const id = postId(url);
+    oneOf(sort, THREAD_SORTS, "sort");
+    const c = count(comments, 10, 100, "comments");
+    const r = count(replies, 3, 20, "replies");
+    const out = await readPage(`https://www.reddit.com/comments/${id}/?sort=${sort}`, THREAD_READY, threadExtract(c, r));
+    if (!out?.post?.title) throw new Fail("HTTP 404 - thread not found (deleted, removed or misspelled).");
+    return out;
+}
+
+// --- CLI ---------------------------------------------------------------------
+
+function parseArgs(args, positional, options) {
+    const out = {};
+    for (let i = 0; i < args.length; i++) {
+        const flag = args[i].startsWith("--") ? args[i].slice(2) : null;
+        if (flag && options[flag]) out[options[flag]] = args[++i];
+        else if (flag) throw new Fail(`Unknown option: --${flag}`);
+        else out[positional] = out[positional] ? `${out[positional]} ${args[i]}` : args[i];
+    }
+    return out;
+}
+
+async function cli([cmd, ...args]) {
+    if (cmd === "status") {
+        const running = await isRunning();
+        process.stdout.write(running ? "running\n" : "not running\n");
+        if (!running) process.exitCode = 3;
+    } else if (cmd === "stop") {
+        process.stdout.write((await closeChrome()) ? "Closed the Reddit Chrome window.\n" : "The Reddit Chrome window is not running.\n");
+    } else if (cmd === "search") {
+        const opts = parseArgs(args, "query", { sub: "subreddit", limit: "limit", sort: "sort", time: "time" });
+        process.stdout.write(JSON.stringify(await search(opts)) + "\n");
     } else if (cmd === "thread") {
-        const url = requireRedditUrl(args[0], "usage: reddit-browser.mjs thread <https://www.reddit.com/comments/<id>/> <comments> <replies>");
-        const out = await readPage(url, THREAD_READY, threadExtract(args[1] || 10, args[2] || 3));
-        if (!out?.post?.title) throw new Fail("HTTP 404 - thread not found (deleted, removed or misspelled).");
-        process.stdout.write(JSON.stringify(out) + "\n");
-    } else throw new Fail("usage: reddit-browser.mjs start | status | stop | search <url> <limit> | thread <url> <comments> <replies>");
-} catch (e) {
-    process.stderr.write((e instanceof Fail ? e.message : `Unexpected error: ${e.message}`) + "\n");
-    process.exitCode = 1;
+        const opts = parseArgs(args, "url", { comments: "comments", replies: "replies", sort: "sort" });
+        process.stdout.write(JSON.stringify(await thread(opts)) + "\n");
+    } else {
+        throw new Fail(
+            'usage: reddit-browser.mjs status | stop | search "<query>" [--sub S] [--limit N] [--sort S] [--time T]' +
+                " | thread <url|post_id> [--comments N] [--replies N] [--sort S]",
+        );
+    }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    try {
+        await cli(process.argv.slice(2));
+    } catch (e) {
+        process.stderr.write((e instanceof Fail ? e.message : `Unexpected error: ${e.message}`) + "\n");
+        process.exitCode = 1;
+    } finally {
+        // Leave Chrome running, but let go of it so the process can exit.
+        current?.close();
+    }
 }

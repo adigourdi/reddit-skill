@@ -11,5 +11,13 @@
     "research",
     "search"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "mcpServers": {
+    "reddit": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/server/reddit-mcp.mjs"
+      ]
+    }
+  }
 }

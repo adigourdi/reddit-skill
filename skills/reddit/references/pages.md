@@ -1,6 +1,6 @@
 # Reddit Page Elements
 
-What `reddit-browser.mjs` reads off reddit.com pages. Reddit's JSON routes are
+What the plugin's `server/reddit-browser.mjs` reads off reddit.com pages. Reddit's JSON routes are
 closed to scripts (see [../ERRORS.md](../ERRORS.md)), but its pages are built
 from custom elements that carry the same data as attributes. When Reddit
 changes its markup and a field comes back `null` or a read fails, this is the

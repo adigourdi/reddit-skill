@@ -1,6 +1,6 @@
 # reddit-skill
 
-A [Claude Code](https://code.claude.com) skill that searches Reddit and digests
+A [Claude Code](https://code.claude.com) plugin that searches Reddit and digests
 threads for you: "what do people on r/rust say about async runtimes?", "summarize
 this thread", "find the consensus on projectors under $1000".
 
@@ -26,7 +26,6 @@ Otherwise, update by hand with `/plugin update reddit@adigourdi`.
 - Google Chrome, launched as `google-chrome` (set `REDDIT_CHROME` to the
   binary's path otherwise)
 - Node.js 22 or newer
-- `jq`
 - A desktop session: the Chrome window runs minimized and only comes up if
   Reddit asks for a check
 
@@ -52,14 +51,18 @@ already read instead of starting over.
 
 ## How it works
 
-- `reddit-search.sh` and `reddit-thread.sh` load search and thread pages in the
-  Chrome window and read the post and comment data off Reddit's own page
-  elements, printing trimmed JSON.
-- `reddit-browser.mjs` starts and stops that window over the DevTools protocol,
-  with no npm packages. The profile lives in
-  `~/.cache/claude-reddit/chrome-profile`, so its cookies persist between runs.
+- The plugin ships a small MCP server, `reddit`, with a `search_reddit` and a
+  `read_thread` tool. They load search and thread pages in the Chrome window
+  and read the post and comment data off Reddit's own page elements, returning
+  trimmed JSON.
+- The `reddit` skill hands the fetching to a subagent that calls those tools,
+  so long threads stay out of your main conversation.
+- The server drives Chrome over the DevTools protocol, with no npm packages.
+  Chrome opens on the first call and closes after 5 idle minutes or when the
+  session ends. The profile lives in `~/.cache/claude-reddit/chrome-profile`,
+  so its cookies persist between runs.
 - Page loads are spaced at least 2.5 s apart.
-- If Reddit shows a check, the script first lets it clear in a plain Chrome
+- If Reddit shows a check, the server first lets it clear in a plain Chrome
   window. If that is not enough, you get a desktop notification and a window to
   clear it yourself (up to 4 minutes).
 
@@ -81,13 +84,13 @@ claude --plugin-dir ~/path/to/reddit-skill
 ```
 
 For that session it replaces the installed plugin, if you have one, so you can
-try edits without pushing them. The scripts run on their own too:
+try edits without pushing them. The readers also run from the command line,
+without Claude Code:
 
 ```bash
-skills/reddit/reddit-browser.mjs start
-skills/reddit/reddit-search.sh "rust async" --limit 3
-skills/reddit/reddit-thread.sh <url|post_id> --comments 3
-skills/reddit/reddit-browser.mjs stop
+server/reddit-browser.mjs search "rust async" --limit 3
+server/reddit-browser.mjs thread <url|post_id> --comments 3
+server/reddit-browser.mjs stop
 ```
 
 See [CLAUDE.md](CLAUDE.md) for the details that matter when changing things.
